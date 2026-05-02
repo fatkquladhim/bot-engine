@@ -1,0 +1,166 @@
+// SwingVision AI — Database Schema (Copied for Bot Sync)
+
+datasource db {
+  provider   = "postgresql"
+  extensions = [vector]
+}
+
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["postgresqlExtensions"]
+}
+
+// ======= 0. USER MANAGEMENT & AUTH =======
+model User {
+  id            String     @id // UUID dari Supabase Auth
+  email         String     @unique
+  displayName   String?
+  photoUrl      String?
+  createdAt     DateTime   @default(now())
+  updatedAt     DateTime   @updatedAt
+
+  analyses      Analysis[]
+  chatSessions  ChatSession[]
+
+  @@map("users")
+}
+
+// ======= 1. SMART CACHING SYSTEM =======
+model CoinMetadata {
+  id              String     @id @default(cuid())
+  symbol          String     @unique 
+  indodaxPair     String?    @unique 
+  coingeckoId     String?    @unique 
+  
+  name            String             
+  logoUrl         String?            
+  description     String?    @db.Text
+  marketRank      Int?               
+  marketCap       Float?             
+  
+  lastUpdated     DateTime   @default(now()) @updatedAt
+
+  analyses        Analysis[]         
+}
+
+model Analysis {
+  id           String   @id @default(cuid())
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  
+  userId       String
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  assetName    String                    
+  coinSymbol   String?                   
+  coin         CoinMetadata? @relation(fields: [coinSymbol], references: [symbol])
+
+  entryPrice   Float
+  targetPrice1 Float
+  targetPrice2 Float
+  stopLoss     Float
+  
+  rrRatio      Float?                    
+  indodaxPrice Float?                    
+  globalPrice  Float?                    
+  priceSpread  Float?                    
+  
+  currentPrice Float?                   
+  sentiment    String?                  
+  analysisText String   @db.Text        
+  imageUrl     String?                  
+  status       Status   @default(OPEN)
+  pnlPercent   Float?                   
+  realizedPnlIdr Float?                 
+  exitPrice    Float?                   
+  notes        String?  @db.Text        
+
+  @@index([userId])
+  @@index([status])
+  @@index([createdAt])
+}
+
+enum Status {
+  OPEN
+  TRADING
+  PROFIT
+  LOSS
+  CANCELLED
+}
+
+// ======= 2. CHAT HISTORY (Agent Memory) =======
+model ChatSession {
+  id        String        @id @default(cuid())
+  userId    String        
+  user      User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  title     String?       
+  createdAt DateTime      @default(now())
+  updatedAt DateTime      @updatedAt
+  
+  messages  ChatMessage[] 
+
+  @@index([userId])
+}
+
+model ChatMessage {
+  id        String      @id @default(cuid())
+  sessionId String
+  session   ChatSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  
+  role      String      
+  content   String      @db.Text 
+  createdAt DateTime    @default(now())
+  
+  @@index([sessionId])
+}
+
+// ======= 3. RAG DATABASE (Fundamental & Strategy) =======
+model KnowledgeBase {
+  id        String   @id @default(cuid())
+  title     String   
+  content   String   @db.Text
+  embedding Unsupported("vector(768)")? 
+  createdAt DateTime @default(now())
+}
+
+// ======= 4. PERFORMANCE TRACKING (Capital Growth Machine) =======
+model DailyPerformance {
+  id             String   @id @default(uuid())
+  date           DateTime @unique
+  startEquity    Float    
+  endEquity      Float    
+  totalTrades    Int
+  winningTrades  Int
+  totalPnlIdr    Float
+  maxDrawdown    Float    
+  profitFactor   Float    // Total Keuntungan / Total Kerugian
+  avgWinIdr      Float    
+  avgLossIdr     Float    
+  bestPair       String?  // Koin penyumbang profit terbesar
+  worstPair      String?  // Koin penyebab loss terbesar
+  aiAccuracy     Float    
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+}
+
+// ======= 5. REMOTE CONTROL & SETTINGS =======
+model BotSettings {
+  id                String   @id @default("global")
+  isBotEnabled      Boolean  @default(true)
+  strategyMode      String   @default("SURVIVAL") // SURVIVAL, WAR, SNIPER, RECOVERY
+  riskPerTrade      Float    @default(2.0)
+  maxOpenPositions  Int      @default(3)
+  dailyLossLimit    Float    @default(5.0)
+  trailingStopPct   Float    @default(5.0)
+  updatedAt         DateTime @updatedAt
+}
+
+model ActivityLog {
+  id        String   @id @default(cuid())
+  type      String   // SCAN, TRADE, ERROR, SYSTEM
+  message   String   @db.Text
+  createdAt DateTime @default(now())
+
+  @@index([createdAt])
+}
