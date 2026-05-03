@@ -1,19 +1,20 @@
 import { prisma } from "@/lib/prisma";
 import { IndodaxClient } from "@/lib/indodax";
+export const dynamic = 'force-dynamic';
 import axios from "axios";
-import { 
-  SniperButton, 
-  PanicSellButton, 
-  EmergencyAllButton 
+import {
+  SniperButton,
+  PanicSellButton,
+  EmergencyAllButton
 } from "@/components/TradeButtons";
 import { BotControlPanel } from "@/components/BotControl";
 import { RefreshTimer } from "@/components/RefreshTimer";
-import { 
-  TrendingUp, 
-  TrendingDown, 
-  Activity, 
-  ShieldCheck, 
-  Zap, 
+import {
+  TrendingUp,
+  TrendingDown,
+  Activity,
+  ShieldCheck,
+  Zap,
   History,
   Target,
   AlertCircle,
@@ -28,13 +29,13 @@ import {
 
 async function getStats() {
   const client = new IndodaxClient();
-  
+
   const [closedAnalyses, openAnalyses, latestSignal, botSettings, recentLogs] = await Promise.all([
-    (prisma as any).analysis.findMany({ 
-      where: { 
+    (prisma as any).analysis.findMany({
+      where: {
         status: { in: ['PROFIT', 'LOSS'] },
         updatedAt: { gte: new Date(Date.now() - 24 * 60 * 60 * 1000) } // Last 24 hours
-      } 
+      }
     }),
     (prisma as any).analysis.findMany({ where: { status: 'TRADING' }, orderBy: { createdAt: 'desc' } }),
     (prisma as any).analysis.findFirst({ orderBy: { createdAt: 'desc' } }),
@@ -53,7 +54,7 @@ async function getStats() {
   let idrBalance = 0;
   let idrHold = 0;
   let totalEquity = 0;
-  
+
   try {
     const [info, summaries] = await Promise.all([
       client.getInfo(),
@@ -63,7 +64,7 @@ async function getStats() {
     if (info.success) {
       idrBalance = parseFloat(info.return.balance.idr || "0");
       idrHold = parseFloat(info.return.balance_hold.idr || "0");
-      
+
       const balances = info.return.balance;
       const holds = info.return.balance_hold;
       const tickers = summaries.tickers;
@@ -82,7 +83,7 @@ async function getStats() {
       }
       totalEquity += idrBalance + idrHold;
     }
-  } catch (e) {}
+  } catch (e) { }
 
   let btcPrice = 0;
   let fgIndex = 50;
@@ -95,13 +96,13 @@ async function getStats() {
     btcPrice = parseFloat(btcTicker.ticker.last);
     fgIndex = parseInt(fgRes.data.data?.[0]?.value || "50");
     fgLabel = fgRes.data.data?.[0]?.value_classification || "Neutral";
-  } catch (e) {}
+  } catch (e) { }
 
   const enrichedPositions = await Promise.all(openAnalyses.map(async (pos: any) => {
     try {
       const ticker = await IndodaxClient.getTicker(pos.assetName);
       let livePrice = parseFloat(ticker.ticker.last);
-      
+
       // SANITY CHECK: Jika livePrice > 10,000x entryPrice, kemungkinan besar data API tertukar dengan Volume
       // FET case: Entry 3.5k, Live 1.3B (Volume). Kita deteksi dan cegah.
       if (pos.entryPrice > 0 && livePrice > pos.entryPrice * 10000) {
@@ -114,10 +115,10 @@ async function getStats() {
     }
   }));
 
-  return { 
+  return {
     performance, openAnalyses: enrichedPositions, latestSignal, botSettings, recentLogs,
-    walletAssets: walletAssets.sort((a,b) => b.value - a.value), idrBalance, idrHold, totalEquity,
-    btcPrice, fgIndex, fgLabel 
+    walletAssets: walletAssets.sort((a, b) => b.value - a.value), idrBalance, idrHold, totalEquity,
+    btcPrice, fgIndex, fgLabel
   };
 }
 
@@ -155,16 +156,16 @@ export default async function DashboardPage() {
           </div>
           <div className="flex-1 lg:flex-none p-3 px-6 bg-white/5 rounded-xl border border-white/10 text-center">
             <p className="text-[9px] text-zinc-500 font-black uppercase tracking-widest mb-1">BTC Index</p>
-            <p className="text-lg font-black text-white">Rp {(btcPrice/1e6).toFixed(1)}M</p>
+            <p className="text-lg font-black text-white">Rp {(btcPrice / 1e6).toFixed(1)}M</p>
           </div>
         </div>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
-        
+
         {/* LEFT COLUMN - STATS & POSITIONS */}
         <div className="lg:col-span-3 space-y-6">
-          
+
           {/* TOP METRICS */}
           <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
             <div className="card neon-border-blue flex flex-col justify-between h-32">
@@ -201,7 +202,7 @@ export default async function DashboardPage() {
                 {openAnalyses.length} Position(s) Live
               </span>
             </div>
-            
+
             <div className="overflow-x-auto">
               <table className="w-full">
                 <thead>
@@ -225,11 +226,11 @@ export default async function DashboardPage() {
                           <td className="py-5">
                             <div className="flex items-center gap-3">
                               <div className={`w-10 h-10 rounded-xl flex items-center justify-center font-black text-xs ${pnl >= 0 ? 'bg-green-500/10 text-green-500' : 'bg-red-500/10 text-red-500'}`}>
-                                {pos.assetName.substring(0,2).toUpperCase()}
+                                {pos.assetName.substring(0, 2).toUpperCase()}
                               </div>
                               <div>
-                                <div className="font-black text-white text-lg">{pos.assetName.replace('_idr','').toUpperCase()}</div>
-                                <div className="text-[10px] text-zinc-500 font-mono">UUID: {pos.id.substring(0,8)}</div>
+                                <div className="font-black text-white text-lg">{pos.assetName.replace('_idr', '').toUpperCase()}</div>
+                                <div className="text-[10px] text-zinc-500 font-mono">UUID: {pos.id.substring(0, 8)}</div>
                               </div>
                             </div>
                           </td>
@@ -245,8 +246,8 @@ export default async function DashboardPage() {
                                 {pnl >= 0 ? '+' : ''}{pnl.toFixed(2)}%
                               </div>
                               <div className="w-24 h-1.5 bg-white/5 rounded-full overflow-hidden hidden md:block">
-                                <div 
-                                  className={`h-full ${pnl >= 0 ? 'bg-green-500' : 'bg-red-500'}`} 
+                                <div
+                                  className={`h-full ${pnl >= 0 ? 'bg-green-500' : 'bg-red-500'}`}
                                   style={{ width: `${Math.min(100, Math.abs(pnl) * 10)}%` }}
                                 />
                               </div>
@@ -275,7 +276,7 @@ export default async function DashboardPage() {
                 <div key={asset.coin} className="card bg-zinc-900/50 hover:scale-[1.02] active:scale-95 cursor-pointer">
                   <div className="flex justify-between items-start mb-4">
                     <div className="w-8 h-8 bg-white/5 rounded-lg flex items-center justify-center font-black text-[10px]">
-                      {asset.coin.substring(0,2)}
+                      {asset.coin.substring(0, 2)}
                     </div>
                     <div className="text-right">
                       <div className="text-[10px] text-zinc-500 font-black uppercase tracking-widest">Value</div>
@@ -297,7 +298,7 @@ export default async function DashboardPage() {
 
         {/* RIGHT COLUMN - COMMANDS & LOGS */}
         <div className="space-y-6">
-          
+
           {/* BOT CONTROL */}
           <BotControlPanel settings={botSettings} />
 
@@ -315,7 +316,7 @@ export default async function DashboardPage() {
               <div className="space-y-6 relative z-10">
                 <div className="p-4 bg-white/5 border border-white/10 rounded-xl">
                   <div className="text-[9px] text-blue-400 font-black uppercase tracking-[0.3em] mb-2">Alpha Signal Detected</div>
-                  <div className="text-3xl font-black text-white tracking-tighter">{latestSignal.assetName.replace('_idr','').toUpperCase()}</div>
+                  <div className="text-3xl font-black text-white tracking-tighter">{latestSignal.assetName.replace('_idr', '').toUpperCase()}</div>
                   <div className="mt-2 text-[10px] text-zinc-500 font-medium">Confidence: 85% • Risk: Low</div>
                 </div>
                 <SniperButton analysisId={latestSignal.id} />
@@ -343,10 +344,9 @@ export default async function DashboardPage() {
                 recentLogs.map((log: any) => (
                   <div key={log.id} className="text-[10px] leading-relaxed border-l border-zinc-800 pl-3 py-1 hover:border-blue-500 transition-colors">
                     <div className="flex justify-between items-center mb-1">
-                      <span className={`font-black tracking-widest ${
-                        log.type === 'TRADE' ? 'text-green-400' : 
-                        log.type === 'ERROR' ? 'text-red-400' : 'text-blue-400'
-                      }`}>
+                      <span className={`font-black tracking-widest ${log.type === 'TRADE' ? 'text-green-400' :
+                          log.type === 'ERROR' ? 'text-red-400' : 'text-blue-400'
+                        }`}>
                         [{log.type}]
                       </span>
                       <span className="text-[9px] text-zinc-700 font-mono">
