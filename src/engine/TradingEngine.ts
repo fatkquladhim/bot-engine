@@ -21,6 +21,7 @@ export interface TradeState {
     amountIdr: number, 
     amountCrypto: number, 
     entryPrice: number,
+    entryTimestamp?: number, // unix ms untuk time-based exit
     sl?: number,
     tp1?: number,
     tp2?: number,
@@ -189,18 +190,25 @@ export class TradingEngine {
         throw new Error('Trade rejected by Performance Filter (Expectancy < 0).');
       }
 
-      // Check BTC Drop (Systemic Risk)
+      // Check BTC Drop (Systemic Risk) - bandingkan harga sekarang vs 1 jam lalu
       let btcDrop = 0;
       try {
-        const btcTicker = await IndodaxPublicAPI.getTicker('btc_idr');
-        const btcLast = parseFloat(btcTicker.ticker.last);
-        const btcOpen = parseFloat(btcTicker.ticker.low); // Approximate open if 24h
-        btcDrop = ((btcLast - btcOpen) / btcOpen) * 100;
+        const { MarketIntelligence } = require('../scanner/MarketIntelligence');
+        const btcBars = await MarketIntelligence.fetchCandles('BTCIDR', '60');
+        if (btcBars.length >= 2) {
+          const btcNow = btcBars[btcBars.length - 1].close;
+          const btcPrev = btcBars[btcBars.length - 2].close;
+          btcDrop = ((btcNow - btcPrev) / btcPrev) * 100;
+        }
       } catch (e) {
         console.log('⚠️ Gagal memuat data BTC untuk Kill Switch.');
       }
 
       const totalCapital = await this.calculateTotalEquity();
+      RiskDomain.setStartingEquity(totalCapital);
+      if (RiskDomain.monitor(totalCapital)) {
+        throw new Error('Trade rejected by Risk Domain Circuit Breaker.');
+      }
 
       // 1. Portfolio & Risk Check
       if (this.riskManager.isKillSwitchEngaged(totalCapital, btcDrop, this.consecutiveApiErrors)) {
@@ -285,6 +293,7 @@ export class TradingEngine {
           amountIdr, 
           amountCrypto: finalCrypto, 
           entryPrice: executionPrice,
+          entryTimestamp: Date.now(),
           sl: targets?.sl,
           tp1: targets?.tp1,
           tp2: (targets as any)?.tp2,

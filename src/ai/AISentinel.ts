@@ -7,6 +7,7 @@ import { AIWarConsensus } from "../predator/aiWar";
 import { PredatorStrategy } from "../strategies/PredatorStrategy";
 import { MacroRegimeEngine } from "../predator/macro";
 import { ProbabilityEngine } from "../modules/ai/ProbabilityEngine";
+import { CompoundingEngine } from "../engine/Compounding";
 
 export type AIResult = {
   pair: string; 
@@ -35,6 +36,7 @@ export class AISentinel {
   private targetPairs: string[];
   private engine: TradingEngine;
   private predatorStrategy: PredatorStrategy;
+  private compounding: CompoundingEngine;
   
   // Sumopod Only System
   private sumopodKey: string;
@@ -51,6 +53,7 @@ export class AISentinel {
     this.engine = engine;
     this.targetPairs = targetPairs;
     this.predatorStrategy = new PredatorStrategy();
+    this.compounding = new CompoundingEngine();
 
     this.sumopodKey = process.env.SUMOPOD_API_KEY || "";
     this.sumopodBaseUrl = process.env.SUMOPOD_BASE_URL || "https://ai.sumopod.com/v1";
@@ -173,7 +176,7 @@ export class AISentinel {
           
           if (evaluation.shouldBuy && evaluation.targets) {
             const t = evaluation.targets;
-            const entry = evaluation.targets.tp1 / 1.1; // Reverse calc entry for display if needed
+            const entry = aiSignals[0]?.precise_entry || 0;
             console.log(`   Entry : ${Math.round(entry).toLocaleString().padEnd(41)}`);
             console.log(`   SL    : ${Math.round(t.sl).toLocaleString().padEnd(41)}`);
             console.log(`   TP1   : ${Math.round(t.tp1).toLocaleString().padEnd(41)}`);
@@ -181,7 +184,18 @@ export class AISentinel {
             console.log(`   Status: 💥 ${evaluation.action} — EXECUTING...`.padEnd(42));
             
             if (!isHeld) {
-              await this.engine.executeBuy(pair, 0, 0, evaluation.targets);
+              // Hitung position size via CompoundingEngine
+              const totalCapital = await this.engine.calculateTotalEquity();
+              const isLowCap = !['btc_idr', 'eth_idr', 'sol_idr', 'bnb_idr'].includes(pair);
+              const slDistPct = entry > 0 && t.sl > 0 ? Math.abs((entry - t.sl) / entry) * 100 : 5;
+              const amountIdr = this.compounding.getOptimalPositionSize(
+                totalCapital, isLowCap, evaluation.score, 2, slDistPct, this.engine.state.recentResults
+              );
+              if (amountIdr >= 10000) {
+                await this.engine.executeBuy(pair, amountIdr, entry, evaluation.targets);
+              } else {
+                console.log(`   Status: ⚠️ Size terlalu kecil (Rp ${amountIdr.toLocaleString()}), skip.`);
+              }
             }
           } else {
             console.log(`   Status: ⚖️ ${evaluation.action} — ${evaluation.reason.substring(0, 30)}`);
@@ -246,11 +260,21 @@ export class AISentinel {
     
     if (action === 'BUY' && score >= 80) {
       console.log(`│  STATUS : 🟢 HIGH CONVICTION BUY                     │`);
-      await this.engine.executeBuy(res.pair, 0, res.precise_entry || 0, {
-        sl: res.precise_sl || 0,
-        tp1: res.precise_tp || 0,
-        tp2: (res.precise_tp || 0) * 1.5
-      });
+      const totalCapital = await this.engine.calculateTotalEquity();
+      const isLowCap = !['btc_idr', 'eth_idr', 'sol_idr', 'bnb_idr'].includes(res.pair);
+      const entry = res.precise_entry || 0;
+      const sl = res.precise_sl || entry * 0.95;
+      const slDistPct = entry > 0 ? Math.abs((entry - sl) / entry) * 100 : 5;
+      const amountIdr = this.compounding.getOptimalPositionSize(
+        totalCapital, isLowCap, score, 2, slDistPct, this.engine.state.recentResults
+      );
+      if (amountIdr >= 10000) {
+        await this.engine.executeBuy(res.pair, amountIdr, entry, {
+          sl,
+          tp1: res.precise_tp || entry * 1.1,
+          tp2: (res.precise_tp || entry * 1.1) * 1.5
+        });
+      }
     } else {
       console.log(`│  STATUS : ⚖️  ${action.padEnd(38)} │`);
     }

@@ -12,13 +12,16 @@ export class ExecutionDomain {
     while (retries > 0) {
       try {
         console.log(`📡 [EXECUTION] Attempting SELL ${pair.toUpperCase()} | Amount: ${amount}`);
-        const result = await client.trade(pair, 'sell', amount);
+        const { IndodaxPublicAPI } = require('../../core/IndodaxPublicAPI');
+        const ticker = await IndodaxPublicAPI.getTicker(pair);
+        const price = parseFloat(ticker.ticker.buy); // best bid = sell price
+        const result = await client.trade(pair, 'sell', price, amount);
         return result;
       } catch (e: any) {
         retries--;
         console.error(`⚠️ [EXECUTION] Sell failed: ${e.message}. Retries left: ${retries}`);
         if (retries === 0) throw e;
-        await new Promise(r => setTimeout(r, 2000)); // 2s backoff
+        await new Promise(r => setTimeout(r, 2000));
       }
     }
   }

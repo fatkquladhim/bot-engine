@@ -22,27 +22,39 @@ export class ExitManager2 {
     };
   }
 
-  public static monitor(currentPrice: number, entryPrice: number, currentSL: number, tpsHit: number[]): PositionUpdate {
+  public static monitor(
+    currentPrice: number,
+    entryPrice: number,
+    currentSL: number,
+    tpsHit: number[],
+    entryTimestamp?: number // unix ms, opsional untuk time-based exit
+  ): PositionUpdate {
     const profitPct = (currentPrice - entryPrice) / entryPrice;
     
-    // 1. Check Initial SL
+    // 0. Time-based exit: jika posisi stuck > 48 jam tanpa profit, keluar
+    if (entryTimestamp) {
+      const ageHours = (Date.now() - entryTimestamp) / 3600000;
+      if (ageHours > 48 && profitPct < 0.01) {
+        return { shouldClose: true, closeReason: 'TIME_EXIT_48H' };
+      }
+    }
+
+    // 1. Check SL
     if (currentPrice <= currentSL) {
       return { shouldClose: true, closeReason: 'STOP_LOSS' };
     }
 
-    // 2. Break Even Point (BEP) Adjustment
-    // If profit +5%, move SL to Entry + 0.5% (to cover fees)
+    // 2. BEP: profit +5% → geser SL ke entry + 0.5%
     if (profitPct >= 0.05 && currentSL < entryPrice) {
       return { shouldClose: false, newSL: entryPrice * 1.005, closeReason: 'MOVE_TO_BEP' };
     }
 
-    // 3. Trailing SL
-    // If profit +10%, move SL to +4%
+    // 3. Trailing SL: profit +10% → SL ke +4%
     if (profitPct >= 0.10 && currentSL < entryPrice * 1.04) {
       return { shouldClose: false, newSL: entryPrice * 1.04, closeReason: 'TRAILING_STOP' };
     }
 
-    // 4. Tiered TP Hit Detection
+    // 4. Tiered TP
     const plan = this.calculateInitialPlan(entryPrice);
     if (currentPrice >= plan.tp1 && !tpsHit.includes(1)) {
       return { shouldClose: false, tpHit: 1, closeReason: 'TP1_HIT' };

@@ -13,26 +13,39 @@ export interface NarrativeReport {
 }
 
 export class NarrativeEngine {
+  private static reportCache: NarrativeReport | null = null;
+  private static cacheExpiry: number = 0;
+  private static readonly CACHE_TTL_MS = 5 * 60 * 1000; // 5 menit
+
   public static async generateReport(): Promise<NarrativeReport> {
+    // Return cache jika masih valid
+    if (this.reportCache && Date.now() < this.cacheExpiry) {
+      return this.reportCache;
+    }
+
     const hotNow = await HotNarrativeScanner.scan();
     const nextWeek = NextWeekPredictor.predict(hotNow);
     
     const { metrics } = await MacroRegimeEngine.getCurrentRegime();
-    const phase = RotationEngine.determinePhase(metrics.btcTrend, 'SIDEWAYS', metrics.altcoinVolume);
+    const phase = RotationEngine.determinePhase(metrics.btcTrend, metrics.ethTrend, metrics.altcoinVolume);
     const topSectors = RotationEngine.getTargetSectors(phase);
 
-    // Integrate Social Hype into hotNow scores
     for (const insight of hotNow) {
       const hype = await SocialHypeRadar.getHypeScore(insight.type);
       insight.score = Math.round((insight.score * 0.7) + (hype * 0.3));
     }
 
-    return {
+    const report: NarrativeReport = {
       hotNow: hotNow.sort((a, b) => b.score - a.score),
       nextWeek,
       marketPhase: phase,
       topSectors
     };
+
+    this.reportCache = report;
+    this.cacheExpiry = Date.now() + this.CACHE_TTL_MS;
+
+    return report;
   }
 
   public static async getNarrativeScore(pair: string): Promise<number> {
@@ -43,7 +56,6 @@ export class NarrativeEngine {
     const insight = report.hotNow.find(h => h.type === narrative);
     let score = insight ? insight.score : 50;
 
-    // Phase alignment bonus
     if (report.topSectors.includes(narrative)) {
       score += 15;
     }

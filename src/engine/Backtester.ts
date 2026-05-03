@@ -24,6 +24,7 @@ export interface BacktestResult {
 
 export class Backtester {
   private balance: number;
+  private initialBalance: number;
   private riskManager: RiskManager;
   private trades: Array<{ pnl: number; isWin: boolean }> = [];
   private peakBalance: number;
@@ -35,6 +36,7 @@ export class Backtester {
 
   constructor(initialBalance: number, riskConfig: RiskConfig) {
     this.balance = initialBalance;
+    this.initialBalance = initialBalance;
     this.peakBalance = initialBalance;
     this.riskManager = new RiskManager(riskConfig);
   }
@@ -121,9 +123,9 @@ export class Backtester {
       winCount: wins,
       lossCount: losses,
       winRate: winRate * 100,
-      initialBalance: 10000000, 
+      initialBalance: this.initialBalance,
       finalBalance: this.balance,
-      totalPnL: this.balance - 10000000,
+      totalPnL: this.balance - this.initialBalance,
       maxDrawdown: this.maxDrawdown,
       profitFactor: grossLoss > 0 ? grossProfit / grossLoss : (grossProfit > 0 ? Infinity : 0),
       expectancy: expectancy

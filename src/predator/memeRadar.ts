@@ -2,9 +2,9 @@ import { MarketIntelligence } from '../scanner/MarketIntelligence';
 
 export class MemeRadar {
   private static MEME_LIST = [
-    'ZEREBRO_IDR', 'PUMP_IDR', 'PIPPIN_IDR', 'FARTCOIN_IDR', 
-    'MOODENG_IDR', 'DOGE_IDR', 'SHIB_IDR', 'PEPE_IDR', 
-    'BONK_IDR', 'WIF_IDR'
+    'zerebro_idr', 'pump_idr', 'pippin_idr', 'fartcoin_idr', 
+    'moodeng_idr', 'doge_idr', 'shib_idr', 'pepe_idr', 
+    'bonk_idr', 'wif_idr'
   ];
 
   public static async analyzeMemeRotation(): Promise<{ topMemes: string[]; boosts: Record<string, number> }> {
@@ -39,6 +39,6 @@ export class MemeRadar {
   }
 
   public static isMeme(pair: string): boolean {
-    return this.MEME_LIST.includes(pair.toUpperCase());
+    return this.MEME_LIST.includes(pair.toLowerCase());
   }
 }

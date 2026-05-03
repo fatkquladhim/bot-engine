@@ -53,19 +53,22 @@ export class PredatorStrategy {
       memeBoost = radar.boosts[pair] || 0;
     }
 
-    // 7. Confidence Matrix (Phase 5.2)
+    // 7. Confidence Matrix — semua komponen dinormalisasi ke range 0-100 sebelum diberi bobot
+    // smcScore max = 80 (20+15+25+10+10), bukan 100
+    const SMC_MAX = 80;
     let confidenceScore = 0;
-    confidenceScore += (consensus.finalScore / 100) * 30; // AI Consensus (Max 30)
-    confidenceScore += (smc.smcScore / 100) * 15;        // SMC (Max 15)
-    confidenceScore += (narrativeScore / 100) * 20;      // Narrative (Max 20)
-    confidenceScore += (sniper.confidence / 100) * 15;   // Sniper Technical (Max 15)
-    confidenceScore += (whale.isWhaleActive ? 15 : 0);   // Whale Bonus (Max 15)
-    confidenceScore += memeBoost;                        // Meme Bonus (Max 10)
+    confidenceScore += (consensus.finalScore / 100) * 30;        // AI Consensus  (Max 30)
+    confidenceScore += (Math.min(smc.smcScore, SMC_MAX) / SMC_MAX) * 15; // SMC (Max 15)
+    confidenceScore += (narrativeScore / 100) * 20;              // Narrative     (Max 20)
+    confidenceScore += (sniper.confidence / 100) * 15;           // Sniper        (Max 15)
+    confidenceScore += (whale.isWhaleActive ? 15 : 0);           // Whale Bonus   (Max 15)
+    confidenceScore += Math.min(memeBoost, 10);                  // Meme Bonus    (Max 10)
+    // Total max = 30+15+20+15+15+10 = 105 → capped 100
 
-    // Normalize and add regime-based bias (Agility Fix)
-    let finalScore = Math.min(100, confidenceScore + 15);
-    if (regime === MarketRegime.WAR) finalScore += 5; // Aggressive in War
-    if (regime === MarketRegime.DEFENSE) finalScore -= 5; // Cautious in Defense
+    let finalScore = Math.min(100, confidenceScore);
+    // Regime bias: hanya ±3 agar tidak mendistorsi terlalu jauh
+    if (regime === MarketRegime.WAR) finalScore = Math.min(100, finalScore + 3);
+    if (regime === MarketRegime.DEFENSE) finalScore = Math.max(0, finalScore - 3);
 
     // 8. TIERED EXECUTION ENGINE (Phase 5.2)
     const entryPrice = sniper.entryPrice || aiResults[0]?.precise_entry || 0;

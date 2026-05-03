@@ -11,8 +11,9 @@ export interface MacroMetrics {
   fearAndGreed: number;
   btcDominance: number;
   btcTrend: 'UP' | 'DOWN' | 'SIDEWAYS';
-  ethStrength: number; // ETH/BTC ratio trend or similar
-  altcoinVolume: number; // Relative volume compared to average
+  ethTrend: 'UP' | 'DOWN' | 'SIDEWAYS';
+  ethStrength: number;
+  altcoinVolume: number;
 }
 
 export class MacroRegimeEngine {
@@ -46,7 +47,8 @@ export class MacroRegimeEngine {
         metrics: { 
           fearAndGreed: 50, 
           btcDominance: 50, 
-          btcTrend: 'SIDEWAYS', 
+          btcTrend: 'SIDEWAYS',
+          ethTrend: 'SIDEWAYS',
           ethStrength: 1, 
           altcoinVolume: 1 
         } 
@@ -55,9 +57,11 @@ export class MacroRegimeEngine {
   }
 
   private static async fetchMetrics(): Promise<MacroMetrics> {
-    const [fngRes, btcTrendRes] = await Promise.allSettled([
+    const [fngRes, btcTrendRes, ethTrendRes, globalRes] = await Promise.allSettled([
       axios.get(this.FNG_API),
-      MarketIntelligence.analyzeTrend('btc_idr')
+      MarketIntelligence.analyzeTrend('btc_idr'),
+      MarketIntelligence.analyzeTrend('eth_idr'),
+      axios.get('https://api.coingecko.com/api/v3/global', { timeout: 5000 })
     ]);
 
     const fearAndGreed = fngRes.status === 'fulfilled' 
@@ -68,16 +72,32 @@ export class MacroRegimeEngine {
       ? btcTrendRes.value.trendDaily 
       : 'SIDEWAYS';
 
-    // Mocking these for now as they require specific global market APIs 
-    // or complex calculation from multiple pairs
-    const btcDominance = 52; 
-    const ethStrength = 1.0; 
-    const altcoinVolume = 1.2;
+    const ethTrend = ethTrendRes.status === 'fulfilled'
+      ? ethTrendRes.value.trendDaily
+      : 'SIDEWAYS';
+
+    // BTC dominance dari CoinGecko global endpoint
+    let btcDominance = 52;
+    let altcoinVolume = 1.0;
+    if (globalRes.status === 'fulfilled') {
+      btcDominance = globalRes.value.data.data?.market_cap_percentage?.btc || 52;
+      // altcoin volume proxy: total volume / BTC volume ratio
+      const totalVol = globalRes.value.data.data?.total_volume?.usd || 0;
+      const btcVol = globalRes.value.data.data?.total_volume?.btc || 1;
+      altcoinVolume = totalVol > 0 ? Math.min(3, totalVol / (btcVol * 50000)) : 1.0;
+    }
+
+    // ETH strength: ETH dominance relative to BTC dominance
+    const ethDominance = globalRes.status === 'fulfilled'
+      ? (globalRes.value.data.data?.market_cap_percentage?.eth || 15)
+      : 15;
+    const ethStrength = btcDominance > 0 ? ethDominance / btcDominance : 1.0;
 
     return {
       fearAndGreed,
       btcDominance,
       btcTrend,
+      ethTrend,
       ethStrength,
       altcoinVolume
     };

@@ -181,61 +181,46 @@ export class AlphaHunter {
       else if (rank >= 251 && rank <= 1000) type = 'LOWCAP';
       else type = 'UNKNOWN'; // Koin sangat kecil / tidak terdaftar CG
 
-      // PRE-SCORE (Before Market Intelligence)
-      // Volume Score (Max 15)
-      let volumeScore = 0;
-      if (volIdr > 2_000_000_000) volumeScore = 15;
-      else if (volIdr > 500_000_000) volumeScore = 12;
-      else if (volIdr > 100_000_000) volumeScore = 8;
-      else volumeScore = 3;
-
-      // Spread Score (Max 10)
-      let spreadScore = 0;
-      if (spread < 0.2) spreadScore = 10;
-      else if (spread < 0.5) spreadScore = 7;
-      else if (spread < 0.8) spreadScore = 4;
-      else spreadScore = 0;
-
-      // Momentum Score Proxy (Max 20) - Healthy pullback / accumulation
-      let momentumScore = 0;
-      if (positionIn24hRange >= 20 && positionIn24hRange <= 50) momentumScore = 20; // Support/Pullback
-      else if (positionIn24hRange > 50 && positionIn24hRange <= 80) momentumScore = 15; // Breakout
-      else if (positionIn24hRange > 80) momentumScore = 5; // FOMO
-      else momentumScore = 10; // Bottom catch
-
-      // Pump Penalty
-      const change24h = cg?.price_change_percentage_24h || 0;
-      const pumpPenalty = change24h > 15 ? -15 : change24h > 10 ? -8 : 0;
+      // PRE-SCORE menggunakan fungsi scoring yang sudah ada
+      const fundamentalScore = this.scoreFundamental(cg, rank);
+      const technicalScore = this.scoreTechnical(priceIdr, high24h, low24h, volIdr, spread, positionIn24hRange);
 
       // Narrative Score (Phase 4.5)
       const narrativeType = require('../narrative/mapper').NarrativeMapper.getNarrativeForPair(pair);
       const narrativeInsight = narrativeReport.hotNow.find(n => n.type === narrativeType);
       const narrativeScore = narrativeInsight ? narrativeInsight.score / 5 : 5;
 
-      // Category Boost (CTO Revision)
-      let categoryBoost = 0;
-      if (narrativeType === 'MEME_COINS' || narrativeType === 'AI_AGENTS') {
-        categoryBoost = 8;
-      }
-
-      const preScore = volumeScore + spreadScore + momentumScore + (metrics.fearAndGreed / 5) + narrativeScore + pumpPenalty + categoryBoost + penalty;
+      const preScore = fundamentalScore + technicalScore + narrativeScore + penalty;
 
 
-      // Entry/SL/TP (Simplified Sniper Formula)
+      // Entry/SL/TP menggunakan ATR-based (akan di-override di step Market Intelligence)
+      // SL sementara: max 3% di bawah harga sekarang (bukan 24h low yang bisa sangat jauh)
       const entry = priceIdr;
-      const sl = low24h * 0.98;   // 2% below 24h low
-      const tp1 = entry * 1.04;    // +4%
-      const tp2 = entry * 1.08;    // +8%
+      const sl = Math.max(low24h, priceIdr * 0.97); // max 3% SL, tidak lebih rendah dari 24h low
+      const tp1 = entry * 1.04;
+      const tp2 = entry * 1.08;
+
+      // Hitung komponen individual untuk totalScore recalculation di step Market Intelligence
+      const volScore = volIdr > 2_000_000_000 ? 15 : volIdr > 500_000_000 ? 12 : volIdr > 100_000_000 ? 8 : 3;
+      const sprdScore = spread < 0.2 ? 10 : spread < 0.5 ? 7 : spread < 0.8 ? 4 : 0;
+      const momScore = positionIn24hRange >= 20 && positionIn24hRange <= 50 ? 20 :
+                       positionIn24hRange > 50 && positionIn24hRange <= 80 ? 15 :
+                       positionIn24hRange > 80 ? 5 : 10;
 
       candidates.push({
         symbol, pair, name: cg?.name || symbol.toUpperCase(),
         type, marketCapRank: rank, marketCapUsd: mcapUsd,
         priceIdr, high24h, low24h, volIdr, spread,
         positionIn24hRange,
-        trendScore: 0, momentumScore, volumeScore, btcContextScore: macro.macroScore, spreadScore, rrScore: 0,
+        trendScore: 0,
+        momentumScore: momScore,
+        volumeScore: volScore,
+        btcContextScore: macro.macroScore,
+        spreadScore: sprdScore,
+        rrScore: 0,
         totalScore: Math.max(0, preScore),
         entry: priceIdr,
-        sl: low24h * 0.98,
+        sl: Math.max(low24h, priceIdr * 0.97),
         tp1: priceIdr * 1.04,
         tp2: priceIdr * 1.08,
         whyBuy: '',
@@ -272,19 +257,17 @@ export class AlphaHunter {
       c.trendAlignment = trend.alignment;
       c.obSummary = ob.summary;
 
-      // === NEW CTO SCORING LOGIC ===
-      // Trend Score (Max 25)
-      c.trendScore = trend.alignment === 'BULLISH' ? 25 : 
+      // === TREND SCORE (Max 25) ===
+      c.trendScore = trend.alignment === 'BULLISH'      ? 25 :
+                     trend.alignment === 'MOMENTUM'     ? 22 :
+                     trend.alignment === 'RANGE_BREAKOUT' ? 20 :
                      trend.alignment === 'LEAN_BULLISH' ? 18 :
-                     trend.alignment === 'MIXED' ? 8 : 0;
-      
-      if (trend.trendScore > 10) c.trendScore += 5; // Bonus for strong alignment
-      
-      // RSI Bonus/Penalty
-      if (trend.rsiRegime === 'OVERSOLD') c.trendScore += 5;
-      else if (trend.rsiRegime === 'OVERBOUGHT') c.trendScore -= 10;
-      
-      if (c.trendScore > 25) c.trendScore = 25;
+                     trend.alignment === 'ACCUMULATION' ? 14 : // Setup bagus untuk entry awal
+                     trend.alignment === 'MIXED'        ? 8  : 0;
+
+      if (trend.trendScore > 10) c.trendScore = Math.min(25, c.trendScore + 5);
+      if (trend.rsiRegime === 'OVERSOLD')   c.trendScore = Math.min(25, c.trendScore + 5);
+      else if (trend.rsiRegime === 'OVERBOUGHT') c.trendScore = Math.max(0, c.trendScore - 10);
 
       // Risk/Reward Score (Max 10)
       c.rrScore = atr.rrRatio >= 2.0 ? 10 : atr.rrRatio >= 1.5 ? 6 : atr.rrRatio >= 1.0 ? 3 : 0;

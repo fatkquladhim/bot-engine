@@ -396,51 +396,42 @@ async function runCLI() {
               const ticker = await IndodaxPublicAPI.getTicker(pair);
               const currentPrice = Number(ticker.ticker.last);
               
-              // 1. Trailing Stop Logic
+              // 1. Trailing Stop via ExitManager2
+              const tpsHit = pos.tpHits || [];
+              const exitUpdate = ExitManager2.monitor(currentPrice, pos.entryPrice, pos.sl || pos.entryPrice * 0.96, tpsHit, pos.entryTimestamp);
+
+              if (exitUpdate.newSL && exitUpdate.newSL > (pos.sl || 0)) {
+                engine.state.openPositions[pair].sl = exitUpdate.newSL;
+                console.log(`🛡️ [EXIT MGR] SL ${pair.toUpperCase()} naik ke Rp ${exitUpdate.newSL.toLocaleString()} (${exitUpdate.closeReason})`);
+                await DBBridge.logActivity('SYSTEM', `🛡️ [TRAILING] SL ${pair.toUpperCase()} → Rp ${exitUpdate.newSL.toLocaleString()}`);
+              }
+
+              if (exitUpdate.tpHit && !tpsHit.includes(exitUpdate.tpHit)) {
+                engine.state.openPositions[pair].tpHits = [...tpsHit, exitUpdate.tpHit];
+              }
+
+              // 2. Hard Exit Check via ExitManager2
+              if (exitUpdate.shouldClose) {
+                console.log(`\n⚠️ [EXIT MGR] ${pair.toUpperCase()} → ${exitUpdate.closeReason} @ Rp ${currentPrice.toLocaleString()}`);
+                await engine.executeSell(pair, pos.amountCrypto);
+                await DBBridge.logActivity('TRADE', `EXIT ${exitUpdate.closeReason}: ${pair.toUpperCase()} @ Rp ${currentPrice.toLocaleString()}`);
+                const pnlPercent = ((currentPrice - pos.entryPrice) / pos.entryPrice) * 100;
+                const realizedPnlIdr = (pnlPercent / 100) * pos.amountIdr;
+                const newStatus = pnlPercent > 0 ? 'PROFIT' : 'LOSS';
+                await (prisma as any).analysis.updateMany({
+                  where: { assetName: pair, status: 'TRADING' },
+                  data: { status: newStatus, pnlPercent: parseFloat(pnlPercent.toFixed(2)), realizedPnlIdr: Math.round(realizedPnlIdr), exitPrice: currentPrice }
+                });
+                continue;
+              }
+
+              // 3. Legacy Trailing Stop via GrowthStrategy (sebagai backup)
               if (pos.sl && pos.entryPrice && pos.tp1) {
                 const newSl = growthStrategy.getTrailingStop(pos.entryPrice, currentPrice, pos.sl, pos.tp1);
-                if (newSl > pos.sl) {
+                if (newSl > (engine.state.openPositions[pair]?.sl || 0)) {
                   engine.state.openPositions[pair].sl = newSl;
                   await DBBridge.logActivity('SYSTEM', `🛡️ [TRAILING] SL ${pair.toUpperCase()} naik ke Rp ${newSl.toLocaleString()}`);
                 }
-              }
-
-              // 2. Hard Exit Check (SL/TP2)
-              if (pos.sl && currentPrice <= pos.sl) {
-                console.log(`\n⚠️ [EXIT] ${pair.toUpperCase()} hit STOP LOSS di Rp ${currentPrice.toLocaleString()}`);
-                await engine.executeSell(pair, pos.amountCrypto);
-                await DBBridge.logActivity('TRADE', `🔴 EXIT SL: ${pair.toUpperCase()} @ Rp ${currentPrice.toLocaleString()}`);
-                
-                const pnlPercent = ((currentPrice - pos.entryPrice) / pos.entryPrice) * 100;
-                const realizedPnlIdr = (pnlPercent / 100) * pos.amountIdr;
-                await (prisma as any).analysis.updateMany({
-                  where: { assetName: pair, status: 'TRADING' },
-                  data: { status: 'LOSS', pnlPercent: parseFloat(pnlPercent.toFixed(2)), realizedPnlIdr: Math.round(realizedPnlIdr), exitPrice: currentPrice }
-                });
-                continue;
-              }
-
-              if (pos.tp2 && currentPrice >= pos.tp2) {
-                console.log(`\n💰 [EXIT] ${pair.toUpperCase()} hit TAKE PROFIT 2 di Rp ${currentPrice.toLocaleString()}`);
-                await engine.executeSell(pair, pos.amountCrypto);
-                await DBBridge.logActivity('TRADE', `🟢 EXIT TP2: ${pair.toUpperCase()} @ Rp ${currentPrice.toLocaleString()}`);
-                
-                const pnlPercent = ((currentPrice - pos.entryPrice) / pos.entryPrice) * 100;
-                const realizedPnlIdr = (pnlPercent / 100) * pos.amountIdr;
-                await (prisma as any).analysis.updateMany({
-                  where: { assetName: pair, status: 'TRADING' },
-                  data: { status: 'PROFIT', pnlPercent: parseFloat(pnlPercent.toFixed(2)), realizedPnlIdr: Math.round(realizedPnlIdr), exitPrice: currentPrice }
-                });
-                continue;
-              }
-
-              // 3. Partial Profit Check (TP1)
-              if (pos.tp1 && currentPrice >= pos.tp1 && !(pos.tpHits || []).includes(1)) {
-                console.log(`\n💵 [PARTIAL] ${pair.toUpperCase()} hit TAKE PROFIT 1. Jual 50%...`);
-                await engine.executeSell(pair, pos.amountCrypto * 0.5);
-                if (!engine.state.openPositions[pair].tpHits) engine.state.openPositions[pair].tpHits = [];
-                engine.state.openPositions[pair].tpHits?.push(1); // Mark TP1 as hit
-                await DBBridge.logActivity('TRADE', `💵 PARTIAL TP1: ${pair.toUpperCase()} (Sold 50%)`);
               }
 
             } catch (e: any) {

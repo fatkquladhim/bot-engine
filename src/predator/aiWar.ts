@@ -26,7 +26,8 @@ export class AIWarConsensus {
 
     let action: 'BUY' | 'WATCHLIST' | 'WAIT' | 'AVOID' = 'AVOID';
     
-    if (avgScore > 72) action = 'BUY';
+    // Threshold diselaraskan dengan PredatorStrategy: MARKET_BUY >= 75, LIMIT_ENTRY >= 68
+    if (avgScore >= 75) action = 'BUY';
     else if (avgScore >= 60) action = 'WATCHLIST';
     else if (avgScore >= 45) action = 'WAIT';
     else action = 'AVOID';
