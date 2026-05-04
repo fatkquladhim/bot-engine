@@ -91,8 +91,10 @@ async function runCLI() {
 
   const engine = new TradingEngine({
     api: { apiKey, secretKey },
-    risk: { maxPositionSizePercent: 100, maxDrawdownDailyPercent: 5 }, // Hardcap 5% daily loss
-    isDryRun: isSafeMode, 
+    risk: { maxPositionSizePercent: 100, maxDrawdownDailyPercent: 10 }, // Naikkan daily loss limit ke 10%
+    isDryRun: isSafeMode,
+    maxPortfolioExposurePercent: 95, // Hampir full deploy saat MEME_MANIA
+    maxOpenPositions: 5
   });
   
   // Inject parameter tambahan ke state/risk engine jika diperlukan
@@ -177,6 +179,8 @@ async function runCLI() {
     console.log(`🎯 Target pairs hari ini: ${dynamicPairs.join(', ').toUpperCase()}`);
 
     const sentinel = new AISentinel(engine, dynamicPairs);
+    // Inject AlphaHunter scores ke sentinel untuk dipakai di PredatorStrategy
+    for (const r of huntResults) sentinel.alphaScores[r.pair] = r.totalScore;
 
     // Re-scan market setiap 30 menit untuk update target pairs
     setInterval(async () => {
@@ -185,8 +189,8 @@ async function runCLI() {
       if (huntResults.length > 0) {
         dynamicPairs = huntResults.map(r => r.pair);
         console.log(`🎯 Target pairs diperbarui: ${dynamicPairs.join(', ')}`);
-        // Update sentinel dengan pairs baru
         (sentinel as any).targetPairs = dynamicPairs;
+        for (const r of huntResults) sentinel.alphaScores[r.pair] = r.totalScore;
       }
     }, 30 * 60 * 1000);
     
@@ -255,8 +259,8 @@ async function runCLI() {
         // --- MAY 1M TARGET INITIALIZATION (FORCED SYNC) ---
         await (prisma as any).botSettings.upsert({
           where: { id: "global" },
-          update: { riskPerTrade: 3, maxOpenPositions: 4, strategyMode: 'WAR' },
-          create: { id: "global", riskPerTrade: 3, maxOpenPositions: 4, strategyMode: 'WAR', isBotEnabled: true }
+          update: { riskPerTrade: 5, maxOpenPositions: 5, strategyMode: 'WAR' },
+          create: { id: "global", riskPerTrade: 5, maxOpenPositions: 5, strategyMode: 'WAR', isBotEnabled: true }
         });
 
         // --- SYNC SETTINGS FROM DASHBOARD ---
@@ -505,10 +509,10 @@ async function runCLI() {
             await DBBridge.logActivity('SCAN', `${ai.pair.toUpperCase()}: Rejected (Bukan sinyal BUY)`);
             continue;
           }
-          if (ai.score < 60) {
-            console.log(`│  STATUS : REJECTED — Score ${ai.score} < 60${' '.repeat(20)}│`);
+          if (ai.score < 42) {
+            console.log(`│  STATUS : REJECTED — Score ${ai.score} < 42${' '.repeat(20)}│`);
             console.log(`└${sep}┘`);
-            await DBBridge.logActivity('SCAN', `${ai.pair.toUpperCase()}: Rejected (Score ${ai.score} < 60)`);
+            await DBBridge.logActivity('SCAN', `${ai.pair.toUpperCase()}: Rejected (Score ${ai.score} < 42)`);
             continue;
           }
           if (!ai.precise_entry || !ai.precise_sl || !ai.precise_tp) {
@@ -527,35 +531,37 @@ async function runCLI() {
           // ===== CRITICAL GUARD #2: AI Price Sanity Check =====
           const liveTicker = await IndodaxPublicAPI.getTicker(ai.pair);
           const livePrice = parseFloat(liveTicker.ticker.last);
-          const entryDeviation = Math.abs(ai.precise_entry - livePrice) / livePrice;
+          // Jika AI entry menyimpang > 10%, gunakan harga live (bukan reject)
+          // Ini menangani kasus AI mengembalikan harga dalam satuan berbeda
+          const entryDeviation = livePrice > 0 ? Math.abs(ai.precise_entry - livePrice) / livePrice : 1;
+          const safeEntry = entryDeviation > 0.10 ? livePrice : (ai.precise_entry || livePrice);
           if (entryDeviation > 0.10) {
-            console.log(`│  STATUS : REJECTED — Entry AI menyimpang ${(entryDeviation * 100).toFixed(1)}% dari harga live │`);
-            console.log(`└${sep}┘`);
-            continue;
+            console.log(`│  ⚠️ Entry AI menyimpang ${(entryDeviation * 100).toFixed(0)}%, pakai harga live: Rp ${livePrice.toLocaleString()} │`);
           }
 
           // ===== CRITICAL GUARD #3: SL Sanitization =====
           // SL harus di BAWAH entry untuk BUY. Jika tidak, gunakan fallback 5%.
-          let safeSl = ai.precise_sl;
-          if (safeSl >= ai.precise_entry) {
-            safeSl = ai.precise_entry * 0.95; // Fallback: 5% di bawah entry
+          let safeSl = (ai.precise_sl && ai.precise_sl < safeEntry) ? ai.precise_sl : safeEntry * 0.95;
+          if (ai.precise_sl && ai.precise_sl >= safeEntry) {
             console.log(`│  ⚠️ SL AI di atas entry! Auto-fix ke Rp ${safeSl.toLocaleString()} │`);
           }
 
           // Sniper Formula (RR Check)
-          if (!growthStrategy.validateSniperEntry(ai.precise_entry, safeSl, ai.precise_tp)) {
+          const safeTP = (ai.precise_tp && ai.precise_tp > safeEntry) ? ai.precise_tp : safeEntry * 1.10;
+          if (!growthStrategy.validateSniperEntry(safeEntry, safeSl, safeTP)) {
             console.log(`│  STATUS : REJECTED — RR < 1:2                      │`);
             console.log(`└${sep}┘`);
             continue;
           }
 
           // Sizing via Compounding Engine
-          const isLowCap = !['btc_idr', 'eth_idr', 'sol_idr', 'bnb_idr'].includes(ai.pair);
+          const MIDCAP = ['btc_idr','eth_idr','sol_idr','bnb_idr','xrp_idr','ada_idr','avax_idr','op_idr','sui_idr','hype_idr'];
+          const isLowCapCli = !MIDCAP.includes(ai.pair);
           const huntCoin = huntResults.find(r => r.pair === ai.pair);
           const ctoScore = huntCoin ? huntCoin.totalScore : ai.score;
           
-          const slDistPercent = Math.abs((ai.precise_entry - safeSl) / ai.precise_entry) * 100;
-          const sizeIdr  = compounding.getOptimalPositionSize(totalCapital, isLowCap, ctoScore, currentRisk, slDistPercent, engine.state.recentResults);
+          const slDistPercent = Math.abs((safeEntry - safeSl) / safeEntry) * 100;
+          const sizeIdr = compounding.getOptimalPositionSize(totalCapital, isLowCapCli, ctoScore, currentRisk, slDistPercent, engine.state.recentResults);
           if (sizeIdr < 10000) {
             console.log(`│  STATUS : REJECTED — Size Rp${sizeIdr.toLocaleString()} terlalu kecil │`);
             console.log(`└${sep}┘`);
@@ -573,7 +579,7 @@ async function runCLI() {
           }
 
           // Full output (ALPHA OMEGA Architecture)
-          const exits = growthStrategy.calculateDynamicExits(ai.precise_entry, safeSl);
+          const exits = growthStrategy.calculateDynamicExits(safeEntry, safeSl);
           console.log(`│  THESIS : ${ai.why_now.substring(0, 41).padEnd(42)}│`);
           console.log(`│  ENTRY  : Rp ${ai.precise_entry.toLocaleString('id-ID').padEnd(38)}│`);
           console.log(`│  SL     : Rp ${safeSl.toLocaleString('id-ID').padEnd(38)}│`);
@@ -582,10 +588,10 @@ async function runCLI() {
           console.log(`│  SIZE   : Rp ${sizeIdr.toLocaleString('id-ID').padEnd(38)}│`);
           console.log(`│  STATUS : ✅ ELITE EDGE — EXECUTING ORDER...         │`);
           console.log(`└${sep}┘`);
-          await DBBridge.logActivity('TRADE', `✅ EXECUTING BUY: ${ai.pair.toUpperCase()} @ Rp ${ai.precise_entry.toLocaleString()}`);
+          await DBBridge.logActivity('TRADE', `✅ EXECUTING BUY: ${ai.pair.toUpperCase()} @ Rp ${safeEntry.toLocaleString()}`);
 
           // EXECUTE ORDER
-          await engine.executeBuy(ai.pair, sizeIdr, ai.precise_entry, { 
+          await engine.executeBuy(ai.pair, sizeIdr, safeEntry, { 
             sl: safeSl, 
             tp1: exits.tp1, 
             tp2: exits.tp2 

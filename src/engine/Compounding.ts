@@ -4,8 +4,8 @@ export interface WalletAllocation {
 }
 
 export class CompoundingEngine {
-  private safeRatio = 0.70; // 70%
-  private sniperRatio = 0.30; // 30%
+  private safeRatio = 0.60;   // 60% → Midcap (BTC, ETH, SOL, ADA, XRP, dll rank 50-250)
+  private sniperRatio = 0.40; // 40% → Lowcap/Meme (DOGE, PEPE, PIPPIN, FARTCOIN, dll)
 
   /**
    * Membagi modal secara virtual menjadi 2 kantong.
@@ -74,16 +74,16 @@ export class CompoundingEngine {
     let confidenceMultiplier = 0;
 
     if (aiScore >= 85) {
-      confidenceMultiplier = 1.2; // Over-allocation for A+ signals
+      confidenceMultiplier = 1.2;
       console.log(`⚡ [COMPOUNDING] Score ${aiScore.toFixed(0)} (A+ Setup). AGGRESSIVE SIZING (120%).`);
     } else if (aiScore >= 75) {
-      confidenceMultiplier = 1.0; 
+      confidenceMultiplier = 1.0;
       console.log(`⚡ [COMPOUNDING] Score ${aiScore.toFixed(0)} (A Setup). FULL SIZING (100%).`);
-    } else if (aiScore >= 65) {
-      confidenceMultiplier = 0.7; 
+    } else if (aiScore >= 60) {
+      confidenceMultiplier = 0.7;
       console.log(`⚖️ [COMPOUNDING] Score ${aiScore.toFixed(0)} (B Setup). OPTIMAL SIZING (70%).`);
-    } else if (aiScore >= 55) {
-      confidenceMultiplier = 0.4; 
+    } else if (aiScore >= 42) {
+      confidenceMultiplier = 0.4;
       console.log(`🐢 [COMPOUNDING] Score ${aiScore.toFixed(0)} (C Setup). REDUCED SIZING (40%).`);
     } else {
       confidenceMultiplier = 0.0;
@@ -116,13 +116,9 @@ export class CompoundingEngine {
    * Fase C (Rp 1.2M - Rp 2M): Boleh agak agresif ke sniper.
    */
   public autoAdjustRatios(totalEquityIdr: number) {
-    // CTO PHASE 3 RULE: Strict 70% Safe, 30% Grow (Sniper)
-    // Semua profit yang masuk akan otomatis terbagi 70/30 dengan rasio statis ini.
-    this.safeRatio = 0.70;
-    this.sniperRatio = 0.30;
-    
+    // Rasio tetap sesuai konfigurasi: 60% Midcap, 40% Lowcap
     console.log(`\n💼 [PORTFOLIO REBALANCING] Total Equity: Rp ${totalEquityIdr.toLocaleString()}`);
-    console.log(`   ► Safe Wallet (70%) : Rp ${(totalEquityIdr * this.safeRatio).toLocaleString()}`);
-    console.log(`   ► Grow Wallet (30%) : Rp ${(totalEquityIdr * this.sniperRatio).toLocaleString()}`);
+    console.log(`   ► Midcap Wallet (60%) : Rp ${(totalEquityIdr * this.safeRatio).toLocaleString()}`);
+    console.log(`   ► Lowcap Wallet (40%) : Rp ${(totalEquityIdr * this.sniperRatio).toLocaleString()}`);
   }
 }

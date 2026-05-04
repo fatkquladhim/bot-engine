@@ -15,10 +15,10 @@ export interface PositionUpdate {
 export class ExitManager2 {
   public static calculateInitialPlan(entry: number): ExitPlan {
     return {
-      tp1: entry * 1.07,
-      tp2: entry * 1.15,
-      tp3: entry * 1.25,
-      sl: entry * 0.96
+      tp1: entry * 1.10,  // +10% (RR 2.5:1 vs SL 4%)
+      tp2: entry * 1.20,  // +20%
+      tp3: entry * 1.35,  // +35%
+      sl: entry * 0.96    // -4%
     };
   }
 

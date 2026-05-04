@@ -4,7 +4,8 @@ export class MemeRadar {
   private static MEME_LIST = [
     'zerebro_idr', 'pump_idr', 'pippin_idr', 'fartcoin_idr', 
     'moodeng_idr', 'doge_idr', 'shib_idr', 'pepe_idr', 
-    'bonk_idr', 'wif_idr'
+    'bonk_idr', 'wif_idr', 'pengu_idr', 'floki_idr',
+    'brett_idr', 'popcat_idr', 'neiro_idr', 'turbo_idr'
   ];
 
   public static async analyzeMemeRotation(): Promise<{ topMemes: string[]; boosts: Record<string, number> }> {
@@ -20,14 +21,13 @@ export class MemeRadar {
 
       // Volume Spike Detection
       if (lastBar.volume > avgVol * 2) {
-        boosts[pair] = 15;
+        boosts[pair] = 20; // Volume spike = strong meme signal
         candidates.push(pair);
       }
 
-      // Breakout Detection
       const high = Math.max(...bars.slice(-20, -1).map(b => b.high));
       if (lastBar.close > high) {
-        boosts[pair] = (boosts[pair] || 0) + 10;
+        boosts[pair] = (boosts[pair] || 0) + 15; // Breakout bonus
         if (!candidates.includes(pair)) candidates.push(pair);
       }
     }

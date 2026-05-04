@@ -47,7 +47,8 @@ export class AISentinel {
   private currentFallbackIndex = 0;
   
   private previousVolumes: Record<string, number> = {};
-  private aiMemory: Record<string, string[]> = {}; 
+  private aiMemory: Record<string, string[]> = {};
+  public alphaScores: Record<string, number> = {}; // Diisi oleh AlphaHunter di cli.ts
 
   constructor(engine: TradingEngine, targetPairs: string[] = ["btc_idr", "eth_idr", "fet_idr"]) {
     this.engine = engine;
@@ -130,7 +131,9 @@ export class AISentinel {
 
   public async analyzeMarket(): Promise<AIResult[]> {
     const { regime } = await MacroRegimeEngine.getCurrentRegime();
-    console.log(`\n🦅 [PREDATOR MODE] ON | Regime: ${regime} | Target Count: ${this.targetPairs.length}`);
+    // Batasi ke top 5 pair per siklus untuk hindari rate limit
+    const pairsToAnalyze = this.targetPairs.slice(0, 5);
+    console.log(`\n🦅 [PREDATOR MODE] ON | Regime: ${regime} | Target Count: ${pairsToAnalyze.length}`);
     
     const results: AIResult[] = [];
     
@@ -139,8 +142,10 @@ export class AISentinel {
       return Promise.race([promise, timeout]);
     };
 
-    const analysisPromises = this.targetPairs.map(async (pair) => {
+    const analysisPromises = pairsToAnalyze.map(async (pair, index) => {
       try {
+        // Stagger requests: delay 2 detik per pair untuk hindari rate limit
+        await new Promise(r => setTimeout(r, index * 2000));
         const isHeld = !!this.engine.state.openPositions[pair];
         const marketData = await this.buildMarketDataForPair(pair);
         
@@ -151,19 +156,28 @@ export class AISentinel {
           : [this.fallbackModels[0], this.freeModels[0]];
 
         const consensusResults = await Promise.allSettled([
-          withTimeout(this.callSumopodAI(marketData, isHeld, pair, modelA), 6000),
-          withTimeout(this.callSumopodAI(marketData, isHeld, pair, modelB), 6000)
+          withTimeout(this.callSumopodAI(marketData, isHeld, pair, modelA), 25000),
+          withTimeout(this.callSumopodAI(marketData, isHeld, pair, modelB), 25000)
         ]);
 
-        const rawA = consensusResults[0].status === 'fulfilled' ? consensusResults[0].value : "";
-        const rawB = consensusResults[1].status === 'fulfilled' ? consensusResults[1].value : "";
+        const rawA = consensusResults[0].status === 'fulfilled' ? consensusResults[0].value :
+          // Fallback ke free model jika paid timeout
+          await this.callSumopodAI(marketData, isHeld, pair, this.freeModels[0]).catch(() => "");
+        const rawB = consensusResults[1].status === 'fulfilled' ? consensusResults[1].value :
+          await this.callSumopodAI(marketData, isHeld, pair, this.freeModels[1] || this.freeModels[0]).catch(() => "");
 
         const resA = this.parseAI(rawA as string, modelA);
         const resB = this.parseAI(rawB as string, modelB);
         const aiSignals = [resA, resB].filter(Boolean) as AIResult[];
 
+        if (aiSignals.length === 0) {
+          console.log(`   ⚠️ [CONSENSUS] ${pair.toUpperCase()}: Kedua model AI gagal/timeout. Skip pair ini.`);
+          return null;
+        }
+        console.log(`   ✅ [CONSENSUS] ${pair.toUpperCase()}: ${aiSignals.length} sinyal diterima | Avg Score: ${(aiSignals.reduce((s,r)=>s+r.score,0)/aiSignals.length).toFixed(0)}`);
+
         if (aiSignals.length > 0) {
-          const evaluation = await this.predatorStrategy.evaluateTrade(pair, aiSignals);
+          const evaluation = await this.predatorStrategy.evaluateTrade(pair, aiSignals, this.alphaScores[pair] || 0);
           
           const sep = '━'.repeat(52);
           const bias = (await MarketIntelligence.analyzeTrend(pair)).alignment;
@@ -176,7 +190,9 @@ export class AISentinel {
           
           if (evaluation.shouldBuy && evaluation.targets) {
             const t = evaluation.targets;
-            const entry = aiSignals[0]?.precise_entry || 0;
+            const entry = (aiSignals[0]?.precise_entry && aiSignals[0].precise_entry > 0)
+          ? aiSignals[0].precise_entry
+          : parseFloat((await IndodaxPublicAPI.getTicker(pair)).ticker.last);
             console.log(`   Entry : ${Math.round(entry).toLocaleString().padEnd(41)}`);
             console.log(`   SL    : ${Math.round(t.sl).toLocaleString().padEnd(41)}`);
             console.log(`   TP1   : ${Math.round(t.tp1).toLocaleString().padEnd(41)}`);
@@ -184,18 +200,19 @@ export class AISentinel {
             console.log(`   Status: 💥 ${evaluation.action} — EXECUTING...`.padEnd(42));
             
             if (!isHeld) {
-              // Hitung position size via CompoundingEngine
-              const totalCapital = await this.engine.calculateTotalEquity();
-              const isLowCap = !['btc_idr', 'eth_idr', 'sol_idr', 'bnb_idr'].includes(pair);
+              // Midcap = rank 50-250 (SOL, ADA, XRP, DOGE, AVAX, dll) → Safe Wallet 60%
+              // Lowcap = rank 251+ atau meme → Sniper Wallet 40%
+              const MIDCAP_PAIRS = ['btc_idr','eth_idr','sol_idr','bnb_idr','xrp_idr','ada_idr',
+                                    'avax_idr','dot_idr','matic_idr','link_idr','uni_idr','atom_idr',
+                                    'near_idr','op_idr','arb_idr','sui_idr','apt_idr','hype_idr'];
+              const isLowCap = !MIDCAP_PAIRS.includes(pair);
               const slDistPct = entry > 0 && t.sl > 0 ? Math.abs((entry - t.sl) / entry) * 100 : 5;
+              const totalCapital = await this.engine.calculateTotalEquity();
               const amountIdr = this.compounding.getOptimalPositionSize(
                 totalCapital, isLowCap, evaluation.score, 2, slDistPct, this.engine.state.recentResults
               );
-              if (amountIdr >= 10000) {
-                await this.engine.executeBuy(pair, amountIdr, entry, evaluation.targets);
-              } else {
-                console.log(`   Status: ⚠️ Size terlalu kecil (Rp ${amountIdr.toLocaleString()}), skip.`);
-              }
+              // Eksekusi dilakukan oleh cli.ts untuk menghindari double-buy
+              console.log(`   Size  : Rp ${amountIdr.toLocaleString()} (dieksekusi via cli)`.padEnd(42));
             }
           } else {
             console.log(`   Status: ⚖️ ${evaluation.action} — ${evaluation.reason.substring(0, 30)}`);
@@ -233,19 +250,30 @@ export class AISentinel {
   }
 
   private async callSumopodAI(marketData: string, isHeld: boolean, pair: string, model: string): Promise<string> {
-    const res = await axios.post(
-      `${this.sumopodBaseUrl}/chat/completions`,
-      {
-        model: model,
-        messages: [{ role: "user", content: this.buildPrompt(marketData, isHeld, pair) }],
-        temperature: 0.2
-      },
-      { 
-        headers: { 'Authorization': `Bearer ${this.sumopodKey}` },
-        timeout: 45000 
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        const res = await axios.post(
+          `${this.sumopodBaseUrl}/chat/completions`,
+          {
+            model: model,
+            messages: [{ role: "user", content: this.buildPrompt(marketData, isHeld, pair) }],
+            temperature: 0.2
+          },
+          { 
+            headers: { 'Authorization': `Bearer ${this.sumopodKey}` },
+            timeout: 45000 
+          }
+        );
+        return res.data.choices?.[0]?.message?.content || "";
+      } catch (e: any) {
+        if (e?.response?.status === 429 && attempt < 2) {
+          await new Promise(r => setTimeout(r, (attempt + 1) * 5000)); // 5s, 10s backoff
+          continue;
+        }
+        throw e;
       }
-    );
-    return res.data.choices?.[0]?.message?.content || "";
+    }
+    return "";
   }
 
   private async processAIResult(res: AIResult) {
@@ -258,10 +286,13 @@ export class AISentinel {
     console.log(`│  CONFIDENCE  : ${res.confidence.padEnd(35)} │`);
     console.log(`│  SCORE       : ${score.toString().padEnd(35)} │`);
     
-    if (action === 'BUY' && score >= 80) {
+    if (action === 'BUY' && score >= 42) {
       console.log(`│  STATUS : 🟢 HIGH CONVICTION BUY                     │`);
       const totalCapital = await this.engine.calculateTotalEquity();
-      const isLowCap = !['btc_idr', 'eth_idr', 'sol_idr', 'bnb_idr'].includes(res.pair);
+      const MIDCAP_PAIRS = ['btc_idr','eth_idr','sol_idr','bnb_idr','xrp_idr','ada_idr',
+                            'avax_idr','dot_idr','matic_idr','link_idr','uni_idr','atom_idr',
+                            'near_idr','op_idr','arb_idr','sui_idr','apt_idr','hype_idr'];
+      const isLowCap = !MIDCAP_PAIRS.includes(res.pair);
       const entry = res.precise_entry || 0;
       const sl = res.precise_sl || entry * 0.95;
       const slDistPct = entry > 0 ? Math.abs((entry - sl) / entry) * 100 : 5;

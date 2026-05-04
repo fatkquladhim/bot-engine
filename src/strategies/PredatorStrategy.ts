@@ -15,7 +15,7 @@ export class PredatorStrategy {
   /**
    * Main Brain for Phase 4 Predator Mode
    */
-  public async evaluateTrade(pair: string, aiResults: AIResult[]): Promise<{
+  public async evaluateTrade(pair: string, aiResults: AIResult[], alphaHunterScore: number = 0): Promise<{
     shouldBuy: boolean;
     action: 'MARKET_BUY' | 'LIMIT_ENTRY' | 'SNIPER_WATCHLIST' | 'SKIP';
     reason: string;
@@ -57,13 +57,14 @@ export class PredatorStrategy {
     // smcScore max = 80 (20+15+25+10+10), bukan 100
     const SMC_MAX = 80;
     let confidenceScore = 0;
-    confidenceScore += (consensus.finalScore / 100) * 30;        // AI Consensus  (Max 30)
+    confidenceScore += (consensus.finalScore / 100) * 25;        // AI Consensus  (Max 25) — diturunkan dari 30
     confidenceScore += (Math.min(smc.smcScore, SMC_MAX) / SMC_MAX) * 15; // SMC (Max 15)
-    confidenceScore += (narrativeScore / 100) * 20;              // Narrative     (Max 20)
+    confidenceScore += (narrativeScore / 100) * 15;              // Narrative     (Max 15) — diturunkan dari 20
     confidenceScore += (sniper.confidence / 100) * 15;           // Sniper        (Max 15)
     confidenceScore += (whale.isWhaleActive ? 15 : 0);           // Whale Bonus   (Max 15)
     confidenceScore += Math.min(memeBoost, 10);                  // Meme Bonus    (Max 10)
-    // Total max = 30+15+20+15+15+10 = 105 → capped 100
+    confidenceScore += (alphaHunterScore / 100) * 20;            // AlphaHunter Technical (Max 20)
+    // Total max = 25+15+15+15+15+10+20 = 115 → capped 100
 
     let finalScore = Math.min(100, confidenceScore);
     // Regime bias: hanya ±3 agar tidak mendistorsi terlalu jauh
@@ -74,7 +75,15 @@ export class PredatorStrategy {
     const entryPrice = sniper.entryPrice || aiResults[0]?.precise_entry || 0;
     const plan = ExitManager2.calculateInitialPlan(entryPrice);
 
-    if (finalScore >= 75) {
+    // Threshold disesuaikan per regime
+    const isMemeManiaPhase = narrativeScore >= 70; // Narrative score tinggi = MEME_MANIA aktif
+    const marketBuyThreshold = regime === MarketRegime.PREDATOR ? 75 : 65;
+    const limitEntryThreshold = isMemeManiaPhase ? 42 :
+                                regime === MarketRegime.PREDATOR ? 68 :
+                                regime === MarketRegime.WAR ? 52 : 58;
+    const watchlistThreshold = 38;
+
+    if (finalScore >= marketBuyThreshold) {
       return {
         shouldBuy: true,
         action: 'MARKET_BUY',
@@ -84,9 +93,9 @@ export class PredatorStrategy {
       };
     }
 
-    if (finalScore >= 68) {
+    if (finalScore >= limitEntryThreshold) {
       return {
-        shouldBuy: true, // Mark as true so engine tries to execute
+        shouldBuy: true,
         action: 'LIMIT_ENTRY',
         reason: `🎯 PREDATOR LIMIT: Good value setup, waiting for entry | ${smc.summary}`,
         score: finalScore,
@@ -94,7 +103,7 @@ export class PredatorStrategy {
       };
     }
 
-    if (finalScore >= 60) {
+    if (finalScore >= watchlistThreshold) {
       return {
         shouldBuy: false,
         action: 'SNIPER_WATCHLIST',

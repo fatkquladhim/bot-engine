@@ -91,7 +91,7 @@ export class TradingEngine {
   // LIVE PERFORMANCE FILTER (EDGE)
   // =========================
   private validateLivePerformance(): boolean {
-    if (this.state.totalTrades < 5) return true; // Beri nafas untuk 5 trade pertama
+    if (this.state.totalTrades < 20) return true; // Butuh minimal 20 trades untuk statistik valid
 
     const winRate = (this.state.winningTrades / this.state.totalTrades) * 100;
     const expectancy = this.state.totalPnL / this.state.totalTrades;
@@ -101,8 +101,8 @@ export class TradingEngine {
     // FAILSAFE AUTO PAUSE (10 Trades Rule)
     if (this.state.recentResults.length === 10) {
       const recentLosses = this.state.recentResults.filter(win => !win).length;
-      if (recentLosses >= 5) {
-        console.log(`🛑 [FAILSAFE TRIGGERED] 5 Loss dalam 10 trade terakhir! Sistem dihentikan otomatis untuk mencegah drawdown parah.`);
+      if (recentLosses >= 7) { // 7 loss dari 10 trade terakhir = stop
+        console.log(`🛑 [FAILSAFE TRIGGERED] 7 Loss dalam 10 trade terakhir! Sistem dihentikan otomatis.`);
         return false;
       }
     }
