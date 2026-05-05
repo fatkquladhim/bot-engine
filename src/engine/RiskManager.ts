@@ -7,7 +7,9 @@ export interface RiskConfig {
 export class RiskManager {
   private config: RiskConfig;
   private dailyLoss: number = 0;
-  private consecutiveLosses: number = 0; // 3-Strike Rule
+  private consecutiveLosses: number = 0;
+  private lastLossTime: number = 0;
+  private readonly STRIKE_COOLDOWN_MS = 2 * 60 * 60 * 1000; // 2 jam cooldown // 3-Strike Rule
   private lastResetDate: string = new Date().toDateString();
 
   constructor(config: RiskConfig) {
@@ -76,10 +78,17 @@ export class RiskManager {
       return true;
     }
 
-    // 2. 3-Strike Rule
+    // 2. 3-Strike Rule dengan auto-reset setelah 2 jam cooldown
     if (this.consecutiveLosses >= 3) {
-      console.error('\n🛑 [3-STRIKE RULE] 3x Loss beruntun. Market sedang tidak bersahabat. Bot otomatis PAUSE.');
-      return true;
+      const timeSinceLastLoss = Date.now() - this.lastLossTime;
+      if (timeSinceLastLoss >= this.STRIKE_COOLDOWN_MS) {
+        console.log(`✅ [3-STRIKE RESET] 2 jam telah berlalu. Strike counter direset, bot aktif kembali.`);
+        this.consecutiveLosses = 0;
+      } else {
+        const remainingMin = Math.ceil((this.STRIKE_COOLDOWN_MS - timeSinceLastLoss) / 60000);
+        console.error(`\n🛑 [3-STRIKE RULE] 3x Loss beruntun. Bot PAUSE. Reset dalam ${remainingMin} menit.`);
+        return true;
+      }
     }
 
     // 3. BTC Dump Check (Systemic Risk)
@@ -101,6 +110,7 @@ export class RiskManager {
     this.checkAndResetDailyLoss();
     this.dailyLoss += lossAmount;
     this.consecutiveLosses += 1;
+    this.lastLossTime = Date.now();
     console.log(`📉 [RISK ENGINE] Loss tercatat. Streak Loss saat ini: ${this.consecutiveLosses}`);
   }
 
