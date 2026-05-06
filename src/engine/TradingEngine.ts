@@ -418,13 +418,13 @@ export class TradingEngine {
       // Update State, PnL, & Performance Metrics
       if (this.state.openPositions[pair]) {
         const entryPrice = this.state.openPositions[pair].entryPrice;
+        const amountIdr = this.state.openPositions[pair].amountIdr;
         const grossPnl = (actualPrice - entryPrice) * amountCrypto;
         
-        // ===== FEE-AWARE PnL =====
-        // Indodax fees: Taker 0.31% per side (Buy + Sell = 0.62% round-trip)
-        const INDODAX_FEE_PERCENT = 0.0062; // 0.62%
-        const totalFeeIdr = this.state.openPositions[pair].amountIdr * INDODAX_FEE_PERCENT;
+        const INDODAX_FEE_PERCENT = 0.0062;
+        const totalFeeIdr = amountIdr * INDODAX_FEE_PERCENT;
         const pnl = grossPnl - totalFeeIdr;
+        const pnlPercent = entryPrice > 0 ? ((actualPrice - entryPrice) / entryPrice) * 100 : 0;
         
         this.state.totalTrades += 1;
         this.state.totalPnL += pnl;
@@ -435,6 +435,23 @@ export class TradingEngine {
           this.riskManager.recordWin();
         } else {
           this.riskManager.recordLoss(Math.abs(pnl));
+        }
+
+        // Update database — pastikan history selalu tercatat
+        try {
+          const { prisma } = require('../db/prisma');
+          await (prisma as any).analysis.updateMany({
+            where: { assetName: pair, status: 'TRADING' },
+            data: {
+              status: isWin ? 'PROFIT' : 'LOSS',
+              exitPrice: actualPrice,
+              pnlPercent: parseFloat(pnlPercent.toFixed(2)),
+              realizedPnlIdr: Math.round(pnl),
+            }
+          });
+        } catch (dbErr: any) {
+          // Jangan crash bot karena DB error
+          console.warn(`⚠️ [DB] Gagal update trade history: ${dbErr.message}`);
         }
 
         // Failsafe tracking (capped at 10)
