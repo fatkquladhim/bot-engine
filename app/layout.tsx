@@ -1,26 +1,20 @@
 import type { Metadata } from "next";
 import "./globals.css";
+import { Navbar } from "@/components/Navbar";
 
 export const metadata: Metadata = {
   title: "ALPHA OMEGA | War Room",
   description: "Advanced Quantitative Trading Dashboard",
 };
 
-import { RefreshTimer } from "@/components/RefreshTimer";
-
-export default function RootLayout({
-  children,
-}: Readonly<{
-  children: React.ReactNode;
-}>) {
+export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en">
-      <head>
-        <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
-      </head>
-      <body className="bg-[#09090b]">
-        {children}
-        <RefreshTimer />
+      <body className="bg-zinc-950 text-white min-h-screen">
+        <Navbar />
+        <main className="max-w-7xl mx-auto px-4 md:px-6 py-6">
+          {children}
+        </main>
       </body>
     </html>
   );

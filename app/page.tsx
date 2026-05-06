@@ -51,7 +51,7 @@ export default function Dashboard() {
   const isOnline = status?.botSettings?.isBotEnabled ?? false;
 
   return (
-    <div className="min-h-screen bg-zinc-950 text-white p-4 md:p-6">
+    <div className="min-h-screen text-white">
       {/* Header */}
       <div className="flex items-center justify-between mb-6">
         <div>
