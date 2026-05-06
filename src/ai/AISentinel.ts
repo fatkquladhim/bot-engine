@@ -208,9 +208,10 @@ export class AISentinel {
               const isLowCap = !MIDCAP_PAIRS.includes(pair);
               const slDistPct = entry > 0 && t.sl > 0 ? Math.abs((entry - t.sl) / entry) * 100 : 5;
               const totalCapital = await this.engine.calculateTotalEquity();
-              const amountIdr = this.compounding.getOptimalPositionSize(
+              const baseSize = this.compounding.getOptimalPositionSize(
                 totalCapital, isLowCap, evaluation.score, 2, slDistPct, this.engine.state.recentResults
               );
+              const amountIdr = Math.floor(baseSize * (evaluation.sizeMultiplier || 1.0));
               // Eksekusi dilakukan oleh cli.ts untuk menghindari double-buy
               console.log(`   Size  : Rp ${amountIdr.toLocaleString()} (dieksekusi via cli)`.padEnd(42));
             }

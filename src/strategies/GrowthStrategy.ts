@@ -22,8 +22,8 @@ export class GrowthStrategy {
 
     const rrRatio = reward / risk;
 
-    if (rrRatio < 2.0) {
-      console.log(`⚖️ [SNIPER GUARD] Batal Entry. RR Ratio tidak memenuhi syarat 1:2 (Current RR: 1:${rrRatio.toFixed(2)})`);
+    if (rrRatio < 1.5) {
+      console.log(`⚖️ [SNIPER GUARD] Batal Entry. RR Ratio tidak memenuhi syarat 1:1.5 (Current RR: 1:${rrRatio.toFixed(2)})`);
       return false;
     }
 

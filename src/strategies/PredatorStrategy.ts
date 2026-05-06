@@ -21,6 +21,7 @@ export class PredatorStrategy {
     reason: string;
     score: number;
     targets?: { sl: number; tp1: number; tp2: number; tp3: number };
+    sizeMultiplier?: number;
   }> {
     // 1. Emergency Check
     const emergency = await EmergencyShield.checkGlobalEmergency();
@@ -76,20 +77,21 @@ export class PredatorStrategy {
     const plan = ExitManager2.calculateInitialPlan(entryPrice);
 
     // Threshold disesuaikan per regime
-    const isMemeManiaPhase = narrativeScore >= 70; // Narrative score tinggi = MEME_MANIA aktif
+    const isMemeManiaPhase = narrativeScore >= 70;
     const marketBuyThreshold = regime === MarketRegime.PREDATOR ? 75 : 65;
     const limitEntryThreshold = isMemeManiaPhase ? 42 :
                                 regime === MarketRegime.PREDATOR ? 68 :
-                                regime === MarketRegime.WAR ? 52 : 58;
-    const watchlistThreshold = 38;
+                                regime === MarketRegime.WAR ? 50 : 55;
+    const scoutEntryThreshold = 38; // SCOUT: accumulation early entry
 
     if (finalScore >= marketBuyThreshold) {
       return {
         shouldBuy: true,
         action: 'MARKET_BUY',
-        reason: `🦅 PREDATOR ELITE: High confidence breakout | ${smc.summary}`,
+        reason: `🦅 ELITE (100% size): High confidence | ${smc.summary}`,
         score: finalScore,
-        targets: plan
+        targets: plan,
+        sizeMultiplier: 1.0
       };
     }
 
@@ -97,21 +99,31 @@ export class PredatorStrategy {
       return {
         shouldBuy: true,
         action: 'LIMIT_ENTRY',
-        reason: `🎯 PREDATOR LIMIT: Good value setup, waiting for entry | ${smc.summary}`,
+        reason: `🎯 PRO (50% size): Good setup | ${smc.summary}`,
         score: finalScore,
-        targets: plan
+        targets: plan,
+        sizeMultiplier: 0.5
       };
     }
 
-    if (finalScore >= watchlistThreshold) {
+    // SCOUT ENTRY: khusus accumulation phase dengan narrative kuat
+    if (finalScore >= scoutEntryThreshold && isMemeManiaPhase && smc.premiumDiscount === 'DISCOUNT') {
       return {
-        shouldBuy: false,
-        action: 'SNIPER_WATCHLIST',
-        reason: `👀 SNIPER WATCH: Technicals valid but volume/narrative weak | Score ${finalScore.toFixed(0)}`,
+        shouldBuy: true,
+        action: 'LIMIT_ENTRY',
+        reason: `🔭 SCOUT (25% size): Accumulation + Narrative | ${smc.summary}`,
         score: finalScore,
-        targets: plan
+        targets: plan,
+        sizeMultiplier: 0.25
       };
     }
+
+    return { 
+      shouldBuy: false, 
+      action: 'SNIPER_WATCHLIST',
+      reason: `👀 WATCH: Score ${finalScore.toFixed(0)} | ${smc.summary}`, 
+      score: finalScore 
+    };
 
     return { 
       shouldBuy: false, 
