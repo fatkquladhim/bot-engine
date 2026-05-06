@@ -102,7 +102,12 @@ export class IndodaxClient {
       throw new Error(`Minimum buy amount is Rp 10,000 (Requested: Rp ${amount})`);
     }
 
-    const cleanPrice = Math.floor(price);
+    // Untuk koin sub-rupiah (PEPE, SHIB, dll), gunakan desimal bukan Math.floor
+    const cleanPrice = price >= 1 ? Math.floor(price) : parseFloat(price.toFixed(8));
+
+    if (cleanPrice <= 0) {
+      throw new Error(`Invalid price: ${price} for pair ${pair}`);
+    }
 
     const params: Record<string, any> = {
       pair,

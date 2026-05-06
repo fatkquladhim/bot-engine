@@ -48,6 +48,8 @@ export class TradingEngine {
   private maxExposurePercent: number;
   private maxPositions: number;
   private consecutiveApiErrors: number = 0;
+  private lastApiErrorTime: number = 0;
+  private readonly API_ERROR_RESET_MS = 10 * 60 * 1000; // 10 menit
   
   // State Persistence (MIGRATED TO DATABASE)
   public state: TradeState = { 
@@ -180,6 +182,15 @@ export class TradingEngine {
       // 0. RISK DOMAIN GUARD
       if (!RiskDomain.isSafeToTrade()) {
         throw new Error('Trading suspended by Risk Domain (Circuit Breaker)');
+      }
+
+      // Auto-reset API error counter setelah 10 menit
+      if (this.consecutiveApiErrors >= 5) {
+        const elapsed = Date.now() - this.lastApiErrorTime;
+        if (elapsed >= this.API_ERROR_RESET_MS) {
+          console.log(`✅ [INFRA RESET] 10 menit berlalu. API error counter direset.`);
+          this.consecutiveApiErrors = 0;
+        }
       }
 
       // 0.1 STUCK ORDER RECOVERY
@@ -341,6 +352,7 @@ export class TradingEngine {
       
       if (!errMsg.includes('rejected')) {
         this.consecutiveApiErrors++;
+        this.lastApiErrorTime = Date.now();
       }
       console.error(`❌ Buy Failed: ${errMsg}`);
       throw error;
