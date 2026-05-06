@@ -93,8 +93,8 @@ async function runCLI() {
     api: { apiKey, secretKey },
     risk: { maxPositionSizePercent: 100, maxDrawdownDailyPercent: 10 }, // Naikkan daily loss limit ke 10%
     isDryRun: isSafeMode,
-    maxPortfolioExposurePercent: 95, // Hampir full deploy saat MEME_MANIA
-    maxOpenPositions: 5
+    maxPortfolioExposurePercent: 95,
+    maxOpenPositions: 7
   });
   
   // Inject parameter tambahan ke state/risk engine jika diperlukan
@@ -259,8 +259,8 @@ async function runCLI() {
         // --- MAY 1M TARGET INITIALIZATION (FORCED SYNC) ---
         await (prisma as any).botSettings.upsert({
           where: { id: "global" },
-          update: { riskPerTrade: 5, maxOpenPositions: 5, strategyMode: 'WAR' },
-          create: { id: "global", riskPerTrade: 5, maxOpenPositions: 5, strategyMode: 'WAR', isBotEnabled: true }
+          update: { riskPerTrade: 5, maxOpenPositions: 7, strategyMode: 'WAR' },
+          create: { id: "global", riskPerTrade: 5, maxOpenPositions: 7, strategyMode: 'WAR', isBotEnabled: true }
         });
 
         // --- SYNC SETTINGS FROM DASHBOARD ---
@@ -662,13 +662,18 @@ async function runCLI() {
             if (update.tpHit === 1 && !(pos.tpHits || []).includes(1)) {
               console.log(`💵 [PREDATOR TP1] ${pair.toUpperCase()} Hit! Selling 50%...`);
               await engine.executeSell(pair, realAmount * 0.5);
-              if (!engine.state.openPositions[pair].tpHits) engine.state.openPositions[pair].tpHits = [];
-              engine.state.openPositions[pair].tpHits?.push(1);
+              // Guard: posisi mungkin sudah dihapus oleh executeSell jika amount terlalu kecil
+              if (engine.state.openPositions[pair]) {
+                if (!engine.state.openPositions[pair].tpHits) engine.state.openPositions[pair].tpHits = [];
+                engine.state.openPositions[pair].tpHits?.push(1);
+              }
             } else if (update.tpHit === 2 && !(pos.tpHits || []).includes(2)) {
               console.log(`💵 [PREDATOR TP2] ${pair.toUpperCase()} Hit! Selling 50% of remaining...`);
               await engine.executeSell(pair, realAmount * 0.5);
-              if (!engine.state.openPositions[pair].tpHits) engine.state.openPositions[pair].tpHits = [];
-              engine.state.openPositions[pair].tpHits?.push(2);
+              if (engine.state.openPositions[pair]) {
+                if (!engine.state.openPositions[pair].tpHits) engine.state.openPositions[pair].tpHits = [];
+                engine.state.openPositions[pair].tpHits?.push(2);
+              }
             }
           }
         }
