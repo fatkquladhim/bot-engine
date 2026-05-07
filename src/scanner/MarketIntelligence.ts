@@ -15,11 +15,13 @@ export interface TrendAnalysis {
 }
 
 export interface OrderbookAnalysis {
-  bidWallStrength: number;  // 0-100 (IDR volume stacked below price)
-  askWallStrength: number;  // 0-100 (IDR volume stacked above price)
-  hasSpoofWall: boolean;    // Giant wall that appears and disappears
-  whaleAbsorbing: boolean;  // Bids absorbing sells (smart money accumulating)
-  obScore: number;          // -10 to +10 bonus for scorer
+  bidWallStrength: number;
+  askWallStrength: number;
+  hasSpoofWall: boolean;
+  whaleAbsorbing: boolean;
+  isAbsorbing: boolean;     // Seller besar absorb buying pressure (bahaya)
+  deltaVolume: number;      // bid IDR - ask IDR (positif = lebih banyak buyer)
+  obScore: number;
   summary: string;
 }
 
@@ -350,32 +352,44 @@ export class MarketIntelligence {
       // Spoof Wall Detection: a single level > 30% of total book volume
       const maxBidLevel = Math.max(...bids.slice(0, 10).map(([p, q]) => p * q));
       const maxAskLevel = Math.max(...asks.slice(0, 10).map(([p, q]) => p * q));
-      const hasSpoofWall = maxBidLevel > bidIdr * 0.4 || maxAskLevel > askIdr * 0.4;
+      // Spoof Wall: single level > 25% of total book (lebih ketat dari sebelumnya 40%)
+      const hasSpoofWall = maxBidLevel > bidIdr * 0.25 || maxAskLevel > askIdr * 0.25;
 
       // Whale Absorbing: bid wall strength >> ask wall (smart money loading)
       const whaleAbsorbing = bidWallStrength > 65;
+
+      // Delta Volume: selisih bid vs ask IDR (positif = lebih banyak buyer)
+      const deltaVolume = bidIdr - askIdr;
+
+      // Absorption Detection: ask wall sangat kuat tapi harga tidak turun = seller absorb buying
+      // Ini tanda bahaya — ada hidden seller besar
+      const isAbsorbing = askWallStrength > 60 && bidWallStrength > 50;
 
       // OB Score
       let obScore = 0;
       if (whaleAbsorbing) obScore += 8;
       else if (bidWallStrength > 50) obScore += 4;
-      if (hasSpoofWall) obScore -= 8; // potential manipulation
-      if (askWallStrength > 70) obScore -= 5; // strong resistance above
+      if (hasSpoofWall) obScore -= 8;
+      if (askWallStrength > 70) obScore -= 5;
+      if (isAbsorbing) obScore -= 6;  // penalty untuk absorption
+      if (deltaVolume > 0) obScore += 3; // bonus jika lebih banyak buyer
 
       const summary = [
         `Bid: ${bidWallStrength.toFixed(0)}% | Ask: ${askWallStrength.toFixed(0)}%`,
+        `Δ: ${deltaVolume > 0 ? '+' : ''}${(deltaVolume / 1e6).toFixed(1)}M`,
         whaleAbsorbing ? '🐋 Whale Absorbing' : '',
-        hasSpoofWall   ? '⚠️ Spoof Wall Detected' : '',
+        isAbsorbing    ? '⚠️ Seller Absorbing' : '',
+        hasSpoofWall   ? '🚨 Spoof Wall' : '',
       ].filter(Boolean).join(' | ');
 
-      return { bidWallStrength, askWallStrength, hasSpoofWall, whaleAbsorbing, obScore, summary };
+      return { bidWallStrength, askWallStrength, hasSpoofWall, whaleAbsorbing, isAbsorbing, deltaVolume, obScore, summary };
     } catch {
       return this.neutralOB();
     }
   }
 
   private static neutralOB(): OrderbookAnalysis {
-    return { bidWallStrength: 50, askWallStrength: 50, hasSpoofWall: false, whaleAbsorbing: false, obScore: 0, summary: 'No data' };
+    return { bidWallStrength: 50, askWallStrength: 50, hasSpoofWall: false, whaleAbsorbing: false, isAbsorbing: false, deltaVolume: 0, obScore: 0, summary: 'No data' };
   }
 
   // ============================================================

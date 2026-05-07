@@ -9,6 +9,7 @@ import { EmergencyShield } from '../predator/shield';
 import { AIResult } from '../ai/AISentinel';
 import { NarrativeEngine } from '../narrative/engine';
 import { WhaleDetector } from '../modules/market/WhaleDetector';
+import { MarketIntelligence } from '../scanner/MarketIntelligence';
 import { ProbabilityEngine } from '../modules/ai/ProbabilityEngine';
 
 export class PredatorStrategy {
@@ -41,11 +42,20 @@ export class PredatorStrategy {
       SniperEntry.scan(pair)
     ]);
     
-    // 5. Narrative & Whale Action
-    const [narrativeScore, whale] = await Promise.all([
+    // 5. Narrative, Whale, dan Orderbook Microstructure
+    const [narrativeScore, whale, ob] = await Promise.all([
       NarrativeEngine.getNarrativeScore(pair),
-      WhaleDetector.detect(pair)
+      WhaleDetector.detect(pair),
+      MarketIntelligence.analyzeOrderbook(pair)
     ]);
+
+    // EXECUTION GUARD: Jika ada absorption atau spoof, skip entry
+    if (ob.isAbsorbing && ob.hasSpoofWall) {
+      return { shouldBuy: false, action: 'SKIP', reason: `🚨 Market Manipulation: Absorption + Spoof Wall terdeteksi`, score: 0 };
+    }
+    if (ob.hasSpoofWall) {
+      return { shouldBuy: false, action: 'SKIP', reason: `🚨 Spoof Wall terdeteksi — kemungkinan trap`, score: 0 };
+    }
 
     // 6. Meme Boost
     let memeBoost = 0;
@@ -58,14 +68,16 @@ export class PredatorStrategy {
     // smcScore max = 80 (20+15+25+10+10), bukan 100
     const SMC_MAX = 80;
     let confidenceScore = 0;
-    confidenceScore += (consensus.finalScore / 100) * 25;        // AI Consensus  (Max 25) — diturunkan dari 30
-    confidenceScore += (Math.min(smc.smcScore, SMC_MAX) / SMC_MAX) * 15; // SMC (Max 15)
-    confidenceScore += (narrativeScore / 100) * 15;              // Narrative     (Max 15) — diturunkan dari 20
-    confidenceScore += (sniper.confidence / 100) * 15;           // Sniper        (Max 15)
-    confidenceScore += (whale.isWhaleActive ? 15 : 0);           // Whale Bonus   (Max 15)
-    confidenceScore += Math.min(memeBoost, 10);                  // Meme Bonus    (Max 10)
-    confidenceScore += (alphaHunterScore / 100) * 20;            // AlphaHunter Technical (Max 20)
-    // Total max = 25+15+15+15+15+10+20 = 115 → capped 100
+    confidenceScore += (consensus.finalScore / 100) * 25;
+    confidenceScore += (Math.min(smc.smcScore, SMC_MAX) / SMC_MAX) * 15;
+    confidenceScore += (narrativeScore / 100) * 15;
+    confidenceScore += (sniper.confidence / 100) * 15;
+    confidenceScore += (whale.isWhaleActive ? 15 : 0);
+    confidenceScore += Math.min(memeBoost, 10);
+    confidenceScore += (alphaHunterScore / 100) * 20;
+    // Microstructure: delta volume dan absorption
+    if (ob.deltaVolume > 0) confidenceScore += 5;   // lebih banyak buyer
+    if (ob.isAbsorbing) confidenceScore -= 8;        // seller besar absorb buying
 
     let finalScore = Math.min(100, confidenceScore);
     // Regime bias: hanya ±3 agar tidak mendistorsi terlalu jauh
