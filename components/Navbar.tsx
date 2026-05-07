@@ -2,13 +2,14 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { LayoutDashboard, History, BarChart3, Settings, Zap } from "lucide-react";
+import { LayoutDashboard, History, BarChart3, Settings, Zap, LineChart } from "lucide-react";
 
 const NAV = [
-  { href: "/",          label: "Dashboard",  icon: LayoutDashboard },
-  { href: "/history",   label: "History",    icon: History },
-  { href: "/analytics", label: "Analytics",  icon: BarChart3 },
-  { href: "/settings",  label: "Settings",   icon: Settings },
+  { href: "/",           label: "Dashboard",  icon: LayoutDashboard },
+  { href: "/portfolio",  label: "Portfolio",  icon: LineChart },
+  { href: "/history",    label: "History",    icon: History },
+  { href: "/analytics",  label: "Analytics",  icon: BarChart3 },
+  { href: "/settings",   label: "Settings",   icon: Settings },
 ];
 
 export function Navbar() {
