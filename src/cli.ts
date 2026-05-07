@@ -171,10 +171,21 @@ async function runCLI() {
     const lastTradeReset = new Date().toDateString();
 
     console.log('\n🔍 [ALPHA HUNTER] Scan pasar awal...');
+    const MEME_PAIRS = new Set(['pepe_idr','doge_idr','shib_idr','fartcoin_idr','pippin_idr',
+      'zerebro_idr','moodeng_idr','pengu_idr','wif_idr','bonk_idr','floki_idr','brett_idr',
+      'jellyjelly_idr','dogs_idr','neiro_idr','turbo_idr','popcat_idr']);
+
+    const balancePairs = (pairs: string[], maxMeme = 3): string[] => {
+      const meme = pairs.filter(p => MEME_PAIRS.has(p)).slice(0, maxMeme);
+      const nonMeme = pairs.filter(p => !MEME_PAIRS.has(p));
+      // Gabung: non-meme dulu, lalu meme (max 3)
+      return [...nonMeme, ...meme].slice(0, 10);
+    };
+
     let huntResults = await hunter.hunt(10);
     let dynamicPairs = huntResults.length > 0
-      ? huntResults.map(r => r.pair)
-      : ['btc_idr', 'eth_idr', 'sol_idr']; // Use high-liquidity bluechips as emergency fallback only
+      ? balancePairs(huntResults.map(r => r.pair))
+      : ['btc_idr', 'eth_idr', 'sol_idr', 'ada_idr', 'xrp_idr'];
 
     console.log(`🎯 Target pairs hari ini: ${dynamicPairs.join(', ').toUpperCase()}`);
 
@@ -187,7 +198,7 @@ async function runCLI() {
       console.log('\n🔄 [ALPHA HUNTER] Re-scan pasar untuk update target...');
       huntResults = await hunter.hunt(10);
       if (huntResults.length > 0) {
-        dynamicPairs = huntResults.map(r => r.pair);
+        dynamicPairs = balancePairs(huntResults.map(r => r.pair));
         console.log(`🎯 Target pairs diperbarui: ${dynamicPairs.join(', ')}`);
         (sentinel as any).targetPairs = dynamicPairs;
         for (const r of huntResults) sentinel.alphaScores[r.pair] = r.totalScore;

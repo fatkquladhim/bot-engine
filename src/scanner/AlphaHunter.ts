@@ -185,12 +185,18 @@ export class AlphaHunter {
       const fundamentalScore = this.scoreFundamental(cg, rank);
       const technicalScore = this.scoreTechnical(priceIdr, high24h, low24h, volIdr, spread, positionIn24hRange);
 
-      // Narrative Score (Phase 4.5)
+      // Narrative Score
       const narrativeType = require('../narrative/mapper').NarrativeMapper.getNarrativeForPair(pair);
       const narrativeInsight = narrativeReport.hotNow.find(n => n.type === narrativeType);
       const narrativeScore = narrativeInsight ? narrativeInsight.score / 5 : 5;
 
-      const preScore = fundamentalScore + technicalScore + narrativeScore + penalty;
+      // Diversifikasi bonus: bluechip dan midcap dapat bonus agar tidak kalah dari meme
+      let diversityBonus = 0;
+      if (type === 'BLUECHIP') diversityBonus = 12;       // BTC, ETH, SOL, BNB, XRP
+      else if (type === 'MIDCAP') diversityBonus = 6;     // ADA, DOT, AVAX, dll
+      // Meme coin tidak dapat bonus — mereka sudah dapat dari narrative
+
+      const preScore = fundamentalScore + technicalScore + narrativeScore + diversityBonus + penalty;
 
 
       // Entry/SL/TP menggunakan ATR-based (akan di-override di step Market Intelligence)
