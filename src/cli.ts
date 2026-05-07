@@ -93,7 +93,7 @@ async function runCLI() {
     api: { apiKey, secretKey },
     risk: { maxPositionSizePercent: 100, maxDrawdownDailyPercent: 10 }, // Naikkan daily loss limit ke 10%
     isDryRun: isSafeMode,
-    maxPortfolioExposurePercent: 95,
+    maxPortfolioExposurePercent: 75,
     maxOpenPositions: 7
   });
   
