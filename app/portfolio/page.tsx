@@ -7,18 +7,14 @@ import { Wallet, TrendingUp, TrendingDown, RefreshCw, BarChart3, Target } from "
 
 export default function PortfolioPage() {
   const [status, setStatus] = useState<any>(null);
-  const [equityData, setEquityData] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
 
   const fetchAll = () => {
     setLoading(true);
-    Promise.all([
-      fetch('/api/bot/status', { cache: 'no-store' }).then(r => r.json()),
-      fetch('/api/bot/equity', { cache: 'no-store' }).then(r => r.json()),
-    ]).then(([s, e]) => {
-      setStatus(s);
-      setEquityData(e.curve || []);
-    }).finally(() => setLoading(false));
+    fetch('/api/bot/status', { cache: 'no-store' })
+      .then(r => r.json())
+      .then(setStatus)
+      .finally(() => setLoading(false));
   };
 
   useEffect(() => {
@@ -48,11 +44,7 @@ export default function PortfolioPage() {
         <h2 className="text-xs font-black uppercase tracking-widest text-zinc-400 mb-4">
           📈 Equity Curve — Pergerakan Modal
         </h2>
-        {loading && !equityData.length ? (
-          <div className="flex items-center justify-center h-48 text-zinc-600 text-xs">Memuat...</div>
-        ) : (
-          <EquityCurve data={equityData} />
-        )}
+        <EquityCurve />
       </div>
 
       {/* Stat Cards */}

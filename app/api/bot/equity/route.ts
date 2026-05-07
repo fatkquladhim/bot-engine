@@ -1,13 +1,18 @@
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 
 export const dynamic = 'force-dynamic';
 
-export async function GET() {
-  // Ambil dari DailyPerformance jika ada
+export async function GET(req: NextRequest) {
+  const { searchParams } = new URL(req.url);
+  const period = searchParams.get('period') || '30'; // 7, 14, 30, 90, 'all'
+
+  const days = period === 'all' ? 365 : parseInt(period);
+  const since = new Date(Date.now() - days * 24 * 3600 * 1000);
+
   const daily = await (prisma as any).dailyPerformance.findMany({
+    where: { date: { gte: since } },
     orderBy: { date: 'asc' },
-    take: 60,
   }).catch(() => []);
 
   if (daily.length > 0) {
@@ -19,17 +24,15 @@ export async function GET() {
     return NextResponse.json({ curve });
   }
 
-  // Fallback: rekonstruksi dari trade history
+  // Fallback dari trade history
   const trades = await (prisma as any).analysis.findMany({
-    where: { status: { in: ['PROFIT', 'LOSS'] } },
+    where: { status: { in: ['PROFIT', 'LOSS'] }, updatedAt: { gte: since } },
     orderBy: { updatedAt: 'asc' },
-    select: { updatedAt: true, realizedPnlIdr: true, status: true },
+    select: { updatedAt: true, realizedPnlIdr: true },
   });
 
-  // Mulai dari equity awal (estimasi dari data yang ada)
-  let equity = 500000; // default jika tidak ada data
+  let equity = 500000;
   const byDay: Record<string, number> = {};
-
   for (const t of trades) {
     const day = new Date(t.updatedAt).toISOString().split('T')[0];
     equity += (t.realizedPnlIdr || 0);
