@@ -18,29 +18,29 @@ export class AIWarConsensus {
     const scores = results.map(r => r.score);
     const avgScore = scores.reduce((a, b) => a + b, 0) / scores.length;
     
-    // Variance check for manipulation detection
     const maxScore = Math.max(...scores);
     const minScore = Math.min(...scores);
     const variance = maxScore - minScore;
-    const isManipulated = variance > 40; // Jika beda > 40 poin antara agen
+    const isManipulated = variance > 40;
+
+    // 3-model voting: hitung berapa yang BUY
+    const buyVotes = results.filter(r => r.action === 'BUY').length;
+    const totalVotes = results.length;
 
     let action: 'BUY' | 'WATCHLIST' | 'WAIT' | 'AVOID' = 'AVOID';
     
-    // Threshold diselaraskan dengan PredatorStrategy: MARKET_BUY >= 75, LIMIT_ENTRY >= 68
-    if (avgScore >= 75) action = 'BUY';
-    else if (avgScore >= 60) action = 'WATCHLIST';
-    else if (avgScore >= 45) action = 'WAIT';
+    if (buyVotes >= 2 && avgScore >= 75) action = 'BUY';           // 2/3 atau 3/3 setuju + score tinggi
+    else if (buyVotes >= 2 && avgScore >= 55) action = 'WATCHLIST'; // 2/3 setuju tapi score sedang
+    else if (buyVotes >= 1 && avgScore >= 45) action = 'WAIT';      // 1/3 setuju
     else action = 'AVOID';
 
-    if (isManipulated) {
-      action = 'WAIT'; // Turunkan prioritas jika agen tidak sepakat jauh
-    }
+    if (isManipulated) action = 'WAIT';
 
     return {
       finalScore: Math.round(avgScore),
       action,
       isManipulated,
-      summary: `Avg: ${avgScore.toFixed(0)} | Var: ${variance} | ${isManipulated ? '⚠️ FAKE MOVE ALERT' : '✅ CONSENSUS OK'}`
+      summary: `Avg: ${avgScore.toFixed(0)} | Votes: ${buyVotes}/${totalVotes} BUY | Var: ${variance} | ${isManipulated ? '⚠️ DIVERGE' : '✅ OK'}`
     };
   }
 }
