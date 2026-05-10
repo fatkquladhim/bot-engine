@@ -116,18 +116,18 @@ export class AISentinel {
         const modelB = this.freeModels[1]; // Critic (Auditor)
         const modelC = this.freeModels[2]; // Judge (Executor)
 
-        // Step 1: Hunter membuat analisa awal
-        const rawA = await withTimeout(this.callSumopodAI(marketData, isHeld, pair, modelA, 'hunter'), 20000).catch(() => "");
+        // Step 1: Hunter membuat analisa awal (increased timeout to 60s for retries)
+        const rawA = await withTimeout(this.callSumopodAI(marketData, isHeld, pair, modelA, 'hunter'), 60000).catch(() => "");
         const resA = this.parseAI(rawA as string, modelA);
 
         // Step 2: Critic mengaudit analisa Hunter
         const auditData = `${marketData}\n\n[HUNTER THESIS]: ${rawA}`;
-        const rawB = rawA ? await withTimeout(this.callSumopodAI(auditData, isHeld, pair, modelB, 'critic'), 20000).catch(() => "") : "";
+        const rawB = rawA ? await withTimeout(this.callSumopodAI(auditData, isHeld, pair, modelB, 'critic'), 60000).catch(() => "") : "";
         const resB = this.parseAI(rawB as string, modelB);
 
         // Step 3: Judge membuat keputusan final
         const judgeData = `${marketData}\n\n[HUNTER]: ${rawA}\n\n[CRITIC]: ${rawB}`;
-        const rawC = (rawA || rawB) ? await withTimeout(this.callSumopodAI(judgeData, isHeld, pair, modelC, 'judge'), 20000).catch(() => "") : "";
+        const rawC = (rawA || rawB) ? await withTimeout(this.callSumopodAI(judgeData, isHeld, pair, modelC, 'judge'), 60000).catch(() => "") : "";
         const resC = this.parseAI(rawC as string, modelC);
 
         const aiSignals = [resA, resB, resC].filter(Boolean) as AIResult[];
@@ -235,17 +235,33 @@ export class AISentinel {
         const res = await axios.post(
           `${this.sumopodBaseUrl}/chat/completions`,
           { model, messages: [{ role: "user", content: this.buildPrompt(marketData, isHeld, pair, role) }], temperature: 0.2 },
-          { headers: { 'Authorization': `Bearer ${this.sumopodKey}` }, timeout: 45000 }
+          { headers: { 'Authorization': `Bearer ${this.sumopodKey}` }, timeout: 30000 }
         );
         return res.data.choices?.[0]?.message?.content || "";
       } catch (e: any) {
-        if (e?.response?.status === 429 && attempt < 2) {
-          await new Promise(r => setTimeout(r, (attempt + 1) * 5000));
+        const status = e?.response?.status;
+        
+        // RATE LIMIT (429): Wait longer and retry
+        if (status === 429) {
+          const retryAfter = parseInt(e?.response?.headers?.['retry-after'] || '30');
+          console.log(`   ⏳ [RATE LIMIT] ${model} - Waiting ${retryAfter}s before retry (attempt ${attempt + 1}/3)`);
+          await new Promise(r => setTimeout(r, retryAfter * 1000));
           continue;
         }
+        
+        // TIMEOUT or SERVER ERROR: Retry with shorter wait
+        if (status === 500 || status === 502 || status === 503 || status === 504 || !status) {
+          const waitTime = (attempt + 1) * 5000;
+          console.log(`   ⏳ [RETRY] ${model} - Server error, retry in ${waitTime/1000}s (attempt ${attempt + 1}/3)`);
+          await new Promise(r => setTimeout(r, waitTime));
+          continue;
+        }
+        
+        // Other errors - don't retry
         throw e;
       }
     }
+    console.log(`   ⚠️ [FAILED] ${model} - All attempts exhausted`);
     return "";
   }
 
