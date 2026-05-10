@@ -2,6 +2,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { IndodaxClient, IndodaxConfig } from '../core/IndodaxClient';
 import { IndodaxPublicAPI } from '../core/IndodaxPublicAPI';
+import { getCachedEquity } from '../core/IndodaxClient';
 import { RiskManager, RiskConfig } from './RiskManager';
 import { Notifier } from '../utils/Notifier';
 import { RiskDomain } from '../modules/risk/RiskDomain';
@@ -160,29 +161,16 @@ export class TradingEngine {
       const isMockKey = this.client['apiKey'] === 'mock_key' || this.client['apiKey'] === 'mock_data' || this.client['apiKey'] === 'your_api_key_here';
       if (this.isDryRun && isMockKey) return 10000000;
 
-      const info = await this.client.getInfo();
-      const tickers = await IndodaxPublicAPI.getAllTickers();
-      
-      let totalValue = parseFloat(info.balance.idr || "0") + parseFloat(info.balance_hold.idr || "0");
-      
-      const balances = info.balance || {};
-      const holds = info.balance_hold || {};
-      const allCoins = new Set([...Object.keys(balances), ...Object.keys(holds)]);
-
-      for (const coin of allCoins) {
-        if (coin === 'idr') continue;
-        const amount = parseFloat(balances[coin] || "0") + parseFloat(holds[coin] || "0");
-        if (amount > 0) {
-          const pair = `${coin.toLowerCase()}_idr`;
-          const price = parseFloat(tickers[pair]?.last || "0");
-          totalValue += amount * price;
-        }
-      }
-      return totalValue;
+      const equity = await getCachedEquity(this.client);
+      return equity.total;
     } catch (e) {
       console.log('⚠️ [EQUITY CALC] Gagal menghitung total equity, fallback ke balance IDR.');
-      const info = await this.client.getInfo();
-      return parseFloat(info.balance.idr || "0") + this.state.totalExposureIdr;
+      try {
+        const info = await (this.client as any).getInfo();
+        return parseFloat(info.balance?.idr || "500000");
+      } catch {
+        return 500000;
+      }
     }
   }
 

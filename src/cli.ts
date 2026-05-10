@@ -18,6 +18,16 @@ import { PerformanceTracker } from './modules/system/PerformanceTracker';
 
 dotenv.config();
 
+process.on("unhandledRejection", (err: any) => {
+  console.error("❌ [UNHANDLED] unhandledRejection:", err?.message || err);
+  process.exit(1);
+});
+
+process.on("uncaughtException", (err: any) => {
+  console.error("❌ [UNHANDLED] uncaughtException:", err?.message || err);
+  process.exit(1);
+});
+
 async function runCLI() {
 
   const args = process.argv.slice(2);
@@ -180,7 +190,7 @@ async function runCLI() {
       const meme = pairs.filter(p => MEME_PAIRS.has(p)).slice(0, maxMeme);
       const nonMeme = pairs.filter(p => !MEME_PAIRS.has(p));
       // Gabung: non-meme dulu, lalu meme (max 3)
-      return [...nonMeme, ...meme].slice(0, 10);
+      return [...nonMeme, ...meme].slice(0, 5); // Max 5 pairs untuk AI Sentinel
     };
 
     let huntResults = await hunter.hunt(10);
