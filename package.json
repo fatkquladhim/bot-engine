@@ -14,7 +14,8 @@
     "bot": "tsx src/cli.ts",
     "postinstall": "prisma generate",
     "db:push": "prisma db push",
-    "db:studio": "prisma studio"
+    "db:studio": "prisma studio",
+    "reset-history": "tsx scripts/resetTradeHistory.ts"
   },
   "dependencies": {
     "@google/genai": "^1.50.1",
