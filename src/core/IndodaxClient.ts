@@ -1,6 +1,6 @@
 import axios, { AxiosInstance } from 'axios';
 import * as crypto from 'crypto';
-import { indodaxPublicLimiter } from '../utils/RateLimiter';
+import { indodaxTapiPost, isPaused, getPauseRemaining } from '../utils/RateLimiter';
 import { IndodaxPublicAPI } from './IndodaxPublicAPI';
 
 export interface IndodaxConfig {
@@ -14,8 +14,6 @@ export interface TapiResponse<T = any> {
   return: T;
   error?: string;
 }
-
-let globalPauseUntil = 0;
 
 export class IndodaxClient {
   private apiKey: string;
@@ -48,46 +46,28 @@ export class IndodaxClient {
       .digest('hex');
   }
 
-  private async tapiCallWithRateLimit<T = any>(method: string, params: Record<string, any> = {}): Promise<T> {
-    if (Date.now() < globalPauseUntil) {
-      const wait = Math.ceil((globalPauseUntil - Date.now()) / 1000);
-      console.log(`   ⏸️ [TAPI PAUSE] Waiting ${wait}s for rate limit reset...`);
-      await new Promise(r => setTimeout(r, Math.min(wait * 1000, 60000)));
+  public async tapiCall<T = any>(method: string, params: Record<string, any> = {}): Promise<T> {
+    const timestamp = Date.now();
+    const data = { method, timestamp, ...params };
+    const postData = new URLSearchParams(data as any).toString();
+    const sign = this.generateSignature(postData);
+
+    const response = await indodaxTapiPost(
+      this.tapiUrl,
+      postData,
+      { Key: this.apiKey, Sign: sign },
+      15000
+    );
+
+    if (response.success !== 1) {
+      throw new Error(`Indodax API Error: ${response.error || 'Unknown error'}`);
     }
 
-    return indodaxPublicLimiter.schedule(async () => {
-      try {
-        const timestamp = Date.now();
-        const data = { method, timestamp, ...params };
-        const postData = new URLSearchParams(data as any).toString();
-        const sign = this.generateSignature(postData);
-
-        const response = await this.client.post<TapiResponse<T>>('', postData, {
-          headers: { Key: this.apiKey, Sign: sign },
-        });
-
-        if (response.data.success !== 1) {
-          const errMsg = response.data.error || 'Unknown error';
-          throw new Error(`Indodax API Error: ${errMsg}`);
-        }
-
-        return response.data.return;
-      } catch (e: any) {
-        if (e?.response?.status === 429) {
-          const retryAfter = parseInt(e?.response?.headers?.['retry-after'] || '1800');
-          console.log(`   🚫 [TAPI 429] Pausing all TAPI requests for ${retryAfter}s`);
-          globalPauseUntil = Date.now() + (retryAfter * 1000);
-        }
-        if (axios.isAxiosError(e)) {
-          throw new Error(`Network Error: ${e.message}`);
-        }
-        throw e;
-      }
-    });
+    return response.return as T;
   }
 
   public async getInfo() {
-    return this.tapiCallWithRateLimit('getInfo');
+    return this.tapiCall('getInfo');
   }
 
   public async trade(pair: string, type: 'buy' | 'sell', price: number, amount: number) {
@@ -104,20 +84,20 @@ export class IndodaxClient {
     } else {
       params[pair.split('_')[0]] = parseFloat(amount.toFixed(8));
     }
-    return this.tapiCallWithRateLimit('trade', params);
+    return this.tapiCall('trade', params);
   }
 
   public async openOrders(pair?: string) {
-    return this.tapiCallWithRateLimit('openOrders', pair ? { pair } : {});
+    return this.tapiCall('openOrders', pair ? { pair } : {});
   }
 
   public async cancelOrder(pair: string, order_id: string, type: 'buy' | 'sell') {
-    return this.tapiCallWithRateLimit('cancelOrder', { pair, order_id, type });
+    return this.tapiCall('cancelOrder', { pair, order_id, type });
   }
 }
 
 // ============================================================
-// SHARED BALANCE CACHE (60s TTL) - Avoid repeated getInfo calls
+// SHARED BALANCE CACHE (60s TTL)
 // ============================================================
 
 let cachedBalance: any = null;
@@ -140,7 +120,7 @@ export function clearBalanceCache() {
 }
 
 // ============================================================
-// SHARED EQUITY CACHE (30s TTL) - All strategies read from this
+// SHARED EQUITY CACHE (30s TTL)
 // ============================================================
 
 let cachedEquity: { total: number; idr: number; assets: any[]; tickers: any } | null = null;
