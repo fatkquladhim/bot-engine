@@ -51,7 +51,6 @@ export class AISentinel {
     this.sumopodKey = process.env.SUMOPOD_API_KEY || "";
     this.sumopodBaseUrl = process.env.SUMOPOD_BASE_URL || "https://ai.sumopod.com/v1";
 
-    // COUNCIL OF THREE: Hunter, Critic, Judge
     const freeEnv = process.env.SUMOPOD_FREE_MODELS || "qwen/qwen3-30b-a3b-instruct-2507,nvidia/nemotron-3-nano-30b,openai/gpt-oss-20b";
     this.freeModels = freeEnv.split(',').map(m => m.trim());
 
@@ -95,127 +94,126 @@ export class AISentinel {
 
   public async analyzeMarket(): Promise<AIResult[]> {
     const { regime } = await MacroRegimeEngine.getCurrentRegime();
-    const maxPairs = regime === 'DEFENSE' ? 5 : regime === 'PREDATOR' ? 10 : 7;
+    const maxPairs = regime === 'DEFENSE' ? 3 : regime === 'PREDATOR' ? 5 : 4;
     const pairsToAnalyze = this.targetPairs.slice(0, maxPairs);
     console.log(`\n🦅 [PREDATOR MODE] ON | Regime: ${regime} | Target Count: ${pairsToAnalyze.length}`);
 
     const results: AIResult[] = [];
+    const settled: (AIResult | null)[] = [];
+    for (const [index, pair] of pairsToAnalyze.entries()) {
+      try {
+        await new Promise(r => setTimeout(r, index * 3000));
+        const result = await this.analyzePairSequential(pair);
+        if (result) settled.push(result);
+      } catch (e: any) {
+        console.error(`   ❌ Error menganalisa ${pair}:`, e.message);
+        settled.push(null);
+      }
+    }
+    for (const res of settled) { if (res) results.push(res); }
+    return results;
+  }
+
+  private async analyzePairSequential(pair: string): Promise<AIResult | null> {
     const withTimeout = (p: Promise<any>, ms: number) =>
       Promise.race([p, new Promise((_, r) => setTimeout(() => r(new Error('TIMEOUT')), ms))]);
 
-    const analysisPromises = pairsToAnalyze.map(async (pair, index) => {
-      try {
-        await new Promise(r => setTimeout(r, index * 2000));
-        const isHeld = !!this.engine.state.openPositions[pair];
-        const marketData = await this.buildMarketDataForPair(pair);
+    const isHeld = !!this.engine.state.openPositions[pair];
+    const marketData = await this.buildMarketDataForPair(pair);
+    console.log(`   🤝 [CONSENSUS] Fetching signals for ${pair.toUpperCase()}...`);
 
-        console.log(`   🤝 [CONSENSUS] Fetching signals for ${pair.toUpperCase()}...`);
+    const modelA = this.freeModels[0];
+    const modelB = this.freeModels[1];
+    const modelC = this.freeModels[2];
 
-        // COUNCIL OF THREE — Sequential Self-Correction
-        const modelA = this.freeModels[0]; // Hunter (Analyst)
-        const modelB = this.freeModels[1]; // Critic (Auditor)
-        const modelC = this.freeModels[2]; // Judge (Executor)
+    const rawA = await withTimeout(this.callSumopodAI(marketData, isHeld, pair, modelA, 'hunter'), 60000).catch(() => "");
+    const resA = this.parseAI(rawA as string, modelA);
 
-        // Step 1: Hunter membuat analisa awal (increased timeout to 60s for retries)
-        const rawA = await withTimeout(this.callSumopodAI(marketData, isHeld, pair, modelA, 'hunter'), 60000).catch(() => "");
-        const resA = this.parseAI(rawA as string, modelA);
+    const auditData = `${marketData}\n\n[HUNTER THESIS]: ${rawA}`;
+    const rawB = rawA ? await withTimeout(this.callSumopodAI(auditData, isHeld, pair, modelB, 'critic'), 60000).catch(() => "") : "";
+    const resB = this.parseAI(rawB as string, modelB);
 
-        // Step 2: Critic mengaudit analisa Hunter
-        const auditData = `${marketData}\n\n[HUNTER THESIS]: ${rawA}`;
-        const rawB = rawA ? await withTimeout(this.callSumopodAI(auditData, isHeld, pair, modelB, 'critic'), 60000).catch(() => "") : "";
-        const resB = this.parseAI(rawB as string, modelB);
+    const judgeData = `${marketData}\n\n[HUNTER]: ${rawA}\n\n[CRITIC]: ${rawB}`;
+    const rawC = (rawA || rawB) ? await withTimeout(this.callSumopodAI(judgeData, isHeld, pair, modelC, 'judge'), 60000).catch(() => "") : "";
+    const resC = this.parseAI(rawC as string, modelC);
 
-        // Step 3: Judge membuat keputusan final
-        const judgeData = `${marketData}\n\n[HUNTER]: ${rawA}\n\n[CRITIC]: ${rawB}`;
-        const rawC = (rawA || rawB) ? await withTimeout(this.callSumopodAI(judgeData, isHeld, pair, modelC, 'judge'), 60000).catch(() => "") : "";
-        const resC = this.parseAI(rawC as string, modelC);
+    const aiSignals = [resA, resB, resC].filter(Boolean) as AIResult[];
 
-        const aiSignals = [resA, resB, resC].filter(Boolean) as AIResult[];
+    if (aiSignals.length === 0) {
+      console.log(`   ⚠️ [COUNCIL] ${pair.toUpperCase()}: Semua model gagal. Skip.`);
+      return null;
+    }
 
-        if (aiSignals.length === 0) {
-          console.log(`   ⚠️ [COUNCIL] ${pair.toUpperCase()}: Semua model gagal. Skip.`);
-          return null;
-        }
+    const buyVotes = aiSignals.filter(s => s.action === 'BUY').length;
+    const avgScore = aiSignals.reduce((s, r) => s + r.score, 0) / aiSignals.length;
+    console.log(`   ✅ [COUNCIL] ${pair.toUpperCase()}: ${aiSignals.length}/3 | BUY: ${buyVotes} | Avg: ${avgScore.toFixed(0)}`);
 
-        const buyVotes = aiSignals.filter(s => s.action === 'BUY').length;
-        const avgScore = aiSignals.reduce((s, r) => s + r.score, 0) / aiSignals.length;
-        console.log(`   ✅ [COUNCIL] ${pair.toUpperCase()}: ${aiSignals.length}/3 | BUY: ${buyVotes} | Avg: ${avgScore.toFixed(0)}`);
-
-        const evaluation = await this.predatorStrategy.evaluateTrade(pair, aiSignals, this.alphaScores[pair] || 0, {
-          narrativeScore: this.alphaScores[pair] ? await this.getAlphaHunterNarrativeScore(pair) : 50,
-          hypeLevel: 50, // Default, will be enhanced when AlphaHunter scores are integrated
-          volumeAcceleration: this.alphaScores[pair] ? (this.alphaScores[pair] > 70 ? 80 : 50) : 50,
-          smartMoneyProbability: 50,
-          explosivePotential: this.alphaScores[pair] || 50,
-          momentumScore: 50
-        });
-
-        const sep = '━'.repeat(52);
-        const bias = (await MarketIntelligence.analyzeTrend(pair)).alignment;
-        console.log(`\n🦅 ${pair.toUpperCase()}`);
-        console.log(`   ${sep}`);
-        console.log(`   Bias  : ${bias.padEnd(41)}`);
-        console.log(`   Tier  : ${evaluation.action.padEnd(41)}`);
-        console.log(`   Score : ${evaluation.score.toFixed(1).padEnd(41)}`);
-
-        if (evaluation.shouldBuy && evaluation.targets) {
-          const t = evaluation.targets;
-          const entry = (aiSignals[0]?.precise_entry && aiSignals[0].precise_entry > 0)
-            ? aiSignals[0].precise_entry
-            : parseFloat((await IndodaxPublicAPI.getTicker(pair)).ticker.last);
-
-          const MIDCAP_PAIRS = ['btc_idr','eth_idr','sol_idr','bnb_idr','xrp_idr','ada_idr',
-            'avax_idr','dot_idr','matic_idr','link_idr','uni_idr','atom_idr',
-            'near_idr','op_idr','arb_idr','sui_idr','apt_idr','hype_idr'];
-          const isLowCap = !MIDCAP_PAIRS.includes(pair);
-          const slDistPct = entry > 0 && t.sl > 0 ? Math.abs((entry - t.sl) / entry) * 100 : 5;
-          const totalCapital = await this.engine.calculateTotalEquity();
-          const baseSize = this.compounding.getOptimalPositionSize(
-            totalCapital, isLowCap, evaluation.score, 2, slDistPct, this.engine.state.recentResults
-          );
-          const amountIdr = Math.floor(baseSize * (evaluation.sizeMultiplier || 1.0));
-
-          console.log(`   Entry : ${Math.round(entry).toLocaleString().padEnd(41)}`);
-          console.log(`   SL    : ${Math.round(t.sl).toLocaleString().padEnd(41)}`);
-          console.log(`   TP1   : ${Math.round(t.tp1).toLocaleString().padEnd(41)}`);
-          console.log(`   Size  : Rp ${amountIdr.toLocaleString()} (dieksekusi via cli)`.padEnd(42));
-          console.log(`   Status: 💥 ${evaluation.action} — EXECUTING...`.padEnd(42));
-        } else {
-          console.log(`   Status: ⚖️ ${evaluation.action} — ${evaluation.reason.substring(0, 30)}`);
-        }
-        console.log(`   ${sep}`);
-
-        if (evaluation.shouldBuy) {
-          const finalRes = aiSignals[0] || {} as AIResult;
-          finalRes.score = evaluation.score;
-          finalRes.pair = pair;
-          finalRes.action = evaluation.action === 'MARKET_BUY' ? 'BUY' : 
-                            evaluation.action === 'LIMIT_ENTRY' ? 'BUY' : 
-                            evaluation.action;
-          finalRes.confidence = evaluation.score >= 70 ? 'HIGH' : 
-                               evaluation.score >= 50 ? 'MID' : 'LOW';
-          finalRes.edge_strength = evaluation.score >= 80 ? 'Elite' : 
-                                  evaluation.score >= 60 ? 'Good' : 'Weak';
-          finalRes.why_now = evaluation.reason;
-          finalRes.precise_entry = evaluation.targets?.sl ? 
-            parseFloat((await IndodaxPublicAPI.getTicker(pair)).ticker.last) : 
-            (finalRes.precise_entry || parseFloat((await IndodaxPublicAPI.getTicker(pair)).ticker.last));
-          if (evaluation.targets) {
-            finalRes.precise_sl = evaluation.targets.sl;
-            finalRes.precise_tp = evaluation.targets.tp1;
-          }
-          return finalRes;
-        }
-        return null;
-      } catch (e: any) {
-        console.error(`   ❌ Error menganalisa ${pair}:`, e.message);
-        return null;
-      }
+    const evaluation = await this.predatorStrategy.evaluateTrade(pair, aiSignals, this.alphaScores[pair] || 0, {
+      narrativeScore: this.alphaScores[pair] ? await this.getAlphaHunterNarrativeScore(pair) : 50,
+      hypeLevel: 50,
+      volumeAcceleration: this.alphaScores[pair] ? (this.alphaScores[pair] > 70 ? 80 : 50) : 50,
+      smartMoneyProbability: 50,
+      explosivePotential: this.alphaScores[pair] || 50,
+      momentumScore: 50
     });
 
-    const settled = await Promise.all(analysisPromises);
-    for (const res of settled) { if (res) results.push(res); }
-    return results;
+    const sep = '━'.repeat(52);
+    const bias = (await MarketIntelligence.analyzeTrend(pair)).alignment;
+    console.log(`\n🦅 ${pair.toUpperCase()}`);
+    console.log(`   ${sep}`);
+    console.log(`   Bias  : ${bias.padEnd(41)}`);
+    console.log(`   Tier  : ${evaluation.action.padEnd(41)}`);
+    console.log(`   Score : ${evaluation.score.toFixed(1).padEnd(41)}`);
+
+    if (evaluation.shouldBuy && evaluation.targets) {
+      const t = evaluation.targets;
+      const entry = (aiSignals[0]?.precise_entry && aiSignals[0].precise_entry > 0)
+        ? aiSignals[0].precise_entry
+        : parseFloat((await IndodaxPublicAPI.getTicker(pair)).ticker.last);
+
+      const MIDCAP_PAIRS = ['btc_idr','eth_idr','sol_idr','bnb_idr','xrp_idr','ada_idr',
+        'avax_idr','dot_idr','matic_idr','link_idr','uni_idr','atom_idr',
+        'near_idr','op_idr','arb_idr','sui_idr','apt_idr','hype_idr'];
+      const isLowCap = !MIDCAP_PAIRS.includes(pair);
+      const slDistPct = entry > 0 && t.sl > 0 ? Math.abs((entry - t.sl) / entry) * 100 : 5;
+      const totalCapital = await this.engine.calculateTotalEquity();
+      const baseSize = this.compounding.getOptimalPositionSize(
+        totalCapital, isLowCap, evaluation.score, 2, slDistPct, this.engine.state.recentResults
+      );
+      const amountIdr = Math.floor(baseSize * (evaluation.sizeMultiplier || 1.0));
+
+      console.log(`   Entry : ${Math.round(entry).toLocaleString().padEnd(41)}`);
+      console.log(`   SL    : ${Math.round(t.sl).toLocaleString().padEnd(41)}`);
+      console.log(`   TP1   : ${Math.round(t.tp1).toLocaleString().padEnd(41)}`);
+      console.log(`   Size  : Rp ${amountIdr.toLocaleString()} (dieksekusi via cli)`.padEnd(42));
+      console.log(`   Status: 💥 ${evaluation.action} — EXECUTING...`.padEnd(42));
+    } else {
+      console.log(`   Status: ⚖️ ${evaluation.action} — ${evaluation.reason.substring(0, 30)}`);
+    }
+    console.log(`   ${sep}`);
+
+    if (evaluation.shouldBuy) {
+      const finalRes = aiSignals[0] || {} as AIResult;
+      finalRes.score = evaluation.score;
+      finalRes.pair = pair;
+      finalRes.action = evaluation.action === 'MARKET_BUY' ? 'BUY' :
+                        evaluation.action === 'LIMIT_ENTRY' ? 'BUY' :
+                        evaluation.action;
+      finalRes.confidence = evaluation.score >= 70 ? 'HIGH' :
+                           evaluation.score >= 50 ? 'MID' : 'LOW';
+      finalRes.edge_strength = evaluation.score >= 80 ? 'Elite' :
+                              evaluation.score >= 60 ? 'Good' : 'Weak';
+      finalRes.why_now = evaluation.reason;
+      finalRes.precise_entry = evaluation.targets?.sl ?
+        parseFloat((await IndodaxPublicAPI.getTicker(pair)).ticker.last) :
+        (finalRes.precise_entry || parseFloat((await IndodaxPublicAPI.getTicker(pair)).ticker.last));
+      if (evaluation.targets) {
+        finalRes.precise_sl = evaluation.targets.sl;
+        finalRes.precise_tp = evaluation.targets.tp1;
+      }
+      return finalRes;
+    }
+    return null;
   }
 
   private rotateFreeModel() {
@@ -240,24 +238,21 @@ export class AISentinel {
         return res.data.choices?.[0]?.message?.content || "";
       } catch (e: any) {
         const status = e?.response?.status;
-        
-        // RATE LIMIT (429): Wait longer and retry
+
         if (status === 429) {
           const retryAfter = parseInt(e?.response?.headers?.['retry-after'] || '30');
           console.log(`   ⏳ [RATE LIMIT] ${model} - Waiting ${retryAfter}s before retry (attempt ${attempt + 1}/3)`);
           await new Promise(r => setTimeout(r, retryAfter * 1000));
           continue;
         }
-        
-        // TIMEOUT or SERVER ERROR: Retry with shorter wait
+
         if (status === 500 || status === 502 || status === 503 || status === 504 || !status) {
           const waitTime = (attempt + 1) * 5000;
           console.log(`   ⏳ [RETRY] ${model} - Server error, retry in ${waitTime/1000}s (attempt ${attempt + 1}/3)`);
           await new Promise(r => setTimeout(r, waitTime));
           continue;
         }
-        
-        // Other errors - don't retry
+
         throw e;
       }
     }
@@ -298,10 +293,7 @@ RESPON JSON SAJA:
   }
 
   private async getAlphaHunterNarrativeScore(pair: string): Promise<number> {
-    // Try to get narrative score from AlphaHunter results
-    // The alphaScores contain the totalScore which includes narrative components
     const alphaScore = this.alphaScores[pair] || 50;
-    // Scale AlphaHunter score (0-100) to narrative-appropriate range
     return Math.min(100, alphaScore);
   }
 

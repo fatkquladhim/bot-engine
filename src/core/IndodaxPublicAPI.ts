@@ -1,5 +1,5 @@
 import axios from 'axios';
-import { indodaxLimiter } from '../utils/RateLimiter';
+import { indodaxPublicLimiter } from '../utils/RateLimiter';
 
 export interface TickerResponse {
   ticker: {
@@ -46,7 +46,7 @@ export class IndodaxPublicAPI {
       await new Promise(r => setTimeout(r, Math.min(wait * 1000, 60000)));
     }
 
-    return indodaxLimiter.schedule(() => axios.get(url, {
+    return indodaxPublicLimiter.schedule(() => axios.get(url, {
       headers: this.getHeaders(),
       timeout: 8000
     }).then(res => {

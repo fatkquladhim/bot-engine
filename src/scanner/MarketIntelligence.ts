@@ -1,6 +1,6 @@
 import axios from 'axios';
 import { IndodaxPublicAPI } from '../core/IndodaxPublicAPI';
-import { indodaxLimiter } from '../utils/RateLimiter';
+import { indodaxPublicLimiter } from '../utils/RateLimiter';
 
 // ============================================================
 // TYPES
@@ -154,7 +154,7 @@ export class MarketIntelligence {
 
     const url = 'https://indodax.com/tradingview/history';
     try {
-      const res = await indodaxLimiter.schedule(() => axios.get(url, {
+      const res = await indodaxPublicLimiter.schedule(() => axios.get(url, {
         params: { symbol: tvSymbol, resolution, from: effectiveFrom, to: effectiveTo },
         headers: {
           'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',

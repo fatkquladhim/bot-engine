@@ -2,6 +2,7 @@ import * as dotenv from 'dotenv';
 import { prisma } from './db/prisma';
 import { TradingEngine } from './engine/TradingEngine';
 import { IndodaxPublicAPI } from './core/IndodaxPublicAPI';
+import { getCachedBalance } from './core/IndodaxClient';
 import { DBBridge } from './db/DBBridge';
 import { DCAStrategy } from './strategies/DCAStrategy';
 import { SwingStrategy, TradingPlan } from './strategies/SwingStrategy';
@@ -221,12 +222,11 @@ async function runCLI() {
 
       // 2. Recover Open Positions
       const dbPositions = await (prisma as any).analysis.findMany({ where: { status: 'TRADING' } });
+      const currentInfo = await getCachedBalance(engine.client);
       for (const pos of dbPositions) {
         if (!engine.state.openPositions[pos.assetName]) {
           console.log(`   ✅ Recovered ${pos.assetName.toUpperCase()}: SL ${pos.stopLoss}, TP1 ${pos.targetPrice1}`);
           
-          // Sync real balance from Indodax
-          const currentInfo = await engine.client.getInfo();
           const coin = pos.assetName.split('_')[0];
           const balances = currentInfo.balance || {};
           const amountCrypto = parseFloat(balances[coin] || "0");
@@ -310,7 +310,7 @@ async function runCLI() {
           return;
         }
 
-        const info = await engine.client.getInfo();
+        const info = await getCachedBalance(engine.client);
         const summaries = await IndodaxPublicAPI.getAllTickers();
         
         const balances = info.balance || {};
@@ -687,7 +687,7 @@ async function runCLI() {
 
       try {
         const summaries = await IndodaxPublicAPI.getAllTickers();
-        const info = await engine.client.getInfo();
+        const info = await getCachedBalance(engine.client);
         const balances = info.balance || {};
 
         for (const pair of openPairs) {
@@ -762,9 +762,9 @@ async function runCLI() {
     // Jalankan AI Cycle setiap 30 menit
     setInterval(runAutopilotCycle, 1800000);
     
-    // Jalankan Micro-Cycle setiap 30 detik (Flash Crash Guardian)
-    setInterval(runMicroCycle, 30000);
-    console.log(`⚡ [MICRO-CYCLE] Flash Crash Guardian aktif — memantau SL/TP setiap 30 detik.`);
+    // Jalankan Micro-Cycle setiap 2 menit (Flash Crash Guardian — dikurangi dari 30s untuk menghindari rate limit)
+    setInterval(runMicroCycle, 120000);
+    console.log(`⚡ [MICRO-CYCLE] Flash Crash Guardian aktif — memantau SL/TP setiap 2 menit.`);
 
     return;
   }

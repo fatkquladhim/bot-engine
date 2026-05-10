@@ -1,8 +1,13 @@
 import Bottleneck from 'bottleneck';
 import axios from 'axios';
 
-export const indodaxLimiter = new Bottleneck({
-  minTime: 1500,
+export const indodaxPublicLimiter = new Bottleneck({
+  minTime: 1200,
+  maxConcurrent: 1
+});
+
+export const indodaxPrivateLimiter = new Bottleneck({
+  minTime: 2500,
   maxConcurrent: 1
 });
 
@@ -16,13 +21,10 @@ export async function rateLimitedGet(
   options: {
     headers?: Record<string, string>;
     timeout?: number;
-    cacheKey?: string;
-    cacheTTL?: number;
     limiter?: Bottleneck;
   } = {}
 ): Promise<any> {
-  const limiter = options.limiter || indodaxLimiter;
-  return limiter.schedule(() => axios.get(url, {
+  return (options.limiter || indodaxPublicLimiter).schedule(() => axios.get(url, {
     headers: {
       'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
       'Accept': 'application/json, text/plain, */*',
