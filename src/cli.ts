@@ -718,13 +718,8 @@ async function runCLI() {
             console.log(`\n🚨 [PREDATOR EXIT] ${pair.toUpperCase()} Reason: ${update.closeReason} @ Rp ${currentPrice.toLocaleString()}`);
             await engine.executeSell(pair, realAmount);
             await DBBridge.logActivity('TRADE', `🔴 PREDATOR EXIT: ${pair.toUpperCase()} @ Rp ${currentPrice.toLocaleString()} (${update.closeReason})`);
-            
-            const grossPnlPercent = ((currentPrice - pos.entryPrice) / pos.entryPrice) * 100;
-            const realizedPnlIdr = (grossPnlPercent / 100) * pos.amountIdr;
-            await (prisma as any).analysis.updateMany({
-              where: { assetName: pair, status: 'TRADING' },
-              data: { status: grossPnlPercent > 0 ? 'PROFIT' : 'LOSS', pnlPercent: parseFloat(grossPnlPercent.toFixed(2)), realizedPnlIdr: Math.round(realizedPnlIdr), exitPrice: currentPrice }
-            });
+            // NOTE: executeSell() sudah meng-update database dengan PnL yang BENAR (termasuk fee)
+            // Jangan update lagi di sini untuk menghindari duplicate/race condition
             continue;
           }
 
