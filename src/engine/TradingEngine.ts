@@ -92,7 +92,7 @@ export class TradingEngine {
   // =========================
   // LIVE PERFORMANCE FILTER (EDGE)
   // =========================
-  private validateLivePerformance(): boolean {
+  private async validateLivePerformance(): Promise<boolean> {
     if (this.state.totalTrades < 20) return true; // Butuh minimal 20 trades untuk statistik valid
 
     const winRate = (this.state.winningTrades / this.state.totalTrades) * 100;
@@ -103,19 +103,49 @@ export class TradingEngine {
     // FAILSAFE AUTO PAUSE (10 Trades Rule)
     if (this.state.recentResults.length === 10) {
       const recentLosses = this.state.recentResults.filter(win => !win).length;
-      if (recentLosses >= 7) { // 7 loss dari 10 trade terakhir = stop
-        console.log(`🛑 [FAILSAFE TRIGGERED] 7 Loss dalam 10 trade terakhir! Sistem dihentikan otomatis.`);
+      if (recentLosses >= 8) { // 8 loss dari 10 trade terakhir = stop (diubah dari 7)
+        console.log(`🛑 [FAILSAFE TRIGGERED] 8 Loss dalam 10 trade terakhir! Sistem dihentikan otomatis.`);
         return false;
       }
     }
 
+    // CRITICAL: Expectancy negatif = STOP
     if (expectancy < 0) {
       console.log("💀 [PERFORMANCE FILTER] EXPECTANCY NEGATIF! Strategi saat ini terbukti rugi di Live Market. Bot di-pause otomatis.");
       return false;
     }
 
-    if (winRate < 40) {
-      console.log("⚠️ [PERFORMANCE FILTER] Win Rate anjlok di bawah 40%. Bot di-pause untuk menghindari kerugian beruntun.");
+    // ADAPTIVE WIN RATE THRESHOLD berdasarkan regime
+    // Narrative trading (MEME/ALTSEASON) bisa punya win rate lebih rendah jika expectancy positif
+    // Karena rely pada big wins dari explosive moves
+    let minWinRateThreshold = 35; // Default lebih lenient (dari 40)
+    
+    // Check regime untuk adjust threshold
+    try {
+      const { MacroRegimeEngine } = require('../predator/macro');
+      const { regime } = await MacroRegimeEngine.getCurrentRegime();
+      const { MarketRegime } = require('../predator/macro');
+      
+      // MEME_MANIA dan PREDATOR: lebih toleran karena rely pada big explosive moves
+      if (regime === MarketRegime.MEME_MANIA || regime === MarketRegime.PREDATOR) {
+        minWinRateThreshold = 25; // Sangat toleran di mode agresif
+        console.log(`   📊 [ADAPTIVE FILTER] Regime: ${regime} | Min Win Rate: ${minWinRateThreshold}%`);
+      } else if (regime === MarketRegime.WAR) {
+        minWinRateThreshold = 30; // Moderat di WAR mode
+      }
+      // DEFENSE: tetap ketat
+    } catch { /* Use default threshold */ }
+
+    // Jika expectancy positif DAN cukup besar, toleransi win rate lebih tinggi
+    // Ini untuk narrative trading yang memang win rate rendah tapi expectancy tinggi
+    if (expectancy > 50000 && winRate >= 25) { // Avg profit Rp 50k+, win rate 25%+
+      console.log(`   ✅ [ADAPTIVE FILTER] Expectancy tinggi (Rp ${Math.round(expectancy).toLocaleString()}) | Win Rate OK: ${winRate.toFixed(1)}%`);
+      return true;
+    }
+
+    if (winRate < minWinRateThreshold) {
+      console.log(`⚠️ [PERFORMANCE FILTER] Win Rate ${winRate.toFixed(1)}% di bawah threshold ${minWinRateThreshold}%.`);
+      console.log(`   💡 Hint: Jika expectancy tetap positif, bot akan tetap jalan dengan adaptive threshold.`);
       return false;
     }
 
@@ -197,8 +227,9 @@ export class TradingEngine {
       await OrderRecovery.reconcileStuckOrders(this.client, pair);
 
       // 0.2 Performance Filter & Systemic Risk Check
-      if (!this.validateLivePerformance()) {
-        throw new Error('Trade rejected by Performance Filter (Expectancy < 0).');
+      const perfOk = await this.validateLivePerformance();
+      if (!perfOk) {
+        throw new Error('Trade rejected by Performance Filter.');
       }
 
       // Check BTC Drop (Systemic Risk) - bandingkan harga sekarang vs 1 jam lalu
