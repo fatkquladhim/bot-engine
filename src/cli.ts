@@ -534,23 +534,35 @@ async function runCLI() {
             continue;
           }
 
-          // Filter dasar
-          if (ai.action !== 'BUY') {
-            console.log(`│  STATUS : REJECTED — Bukan sinyal BUY              │`);
+          // Filter dasar - ACCEPT LIMIT_ENTRY and MARKET_BUY as valid signals
+          const validBuyActions = ['BUY', 'LIMIT_ENTRY', 'MARKET_BUY'];
+          if (!validBuyActions.includes(ai.action)) {
+            console.log(`│  STATUS : REJECTED — Action ${ai.action} bukan sinyal BUY              │`);
             console.log(`└${sep}┘`);
-            await DBBridge.logActivity('SCAN', `${ai.pair.toUpperCase()}: Rejected (Bukan sinyal BUY)`);
+            await DBBridge.logActivity('SCAN', `${ai.pair.toUpperCase()}: Rejected (Action: ${ai.action})`);
             continue;
           }
-          if (ai.score < 42) {
-            console.log(`│  STATUS : REJECTED — Score ${ai.score} < 42${' '.repeat(20)}│`);
+          if (ai.score < 38) {
+            console.log(`│  STATUS : REJECTED — Score ${ai.score} < 38${' '.repeat(20)}│`);
             console.log(`└${sep}┘`);
-            await DBBridge.logActivity('SCAN', `${ai.pair.toUpperCase()}: Rejected (Score ${ai.score} < 42)`);
+            await DBBridge.logActivity('SCAN', `${ai.pair.toUpperCase()}: Rejected (Score ${ai.score} < 38)`);
             continue;
           }
           if (!ai.precise_entry || !ai.precise_sl || !ai.precise_tp) {
-            console.log(`│  STATUS : REJECTED — AI tidak berikan target presisi│`);
-            console.log(`└${sep}┘`);
-            continue;
+            // Get live price if AI doesn't provide targets - ALLOW ENTRY with live price
+            if (ai.action === 'LIMIT_ENTRY' || ai.action === 'MARKET_BUY') {
+              const liveTicker = await IndodaxPublicAPI.getTicker(ai.pair);
+              const livePrice = parseFloat(liveTicker.ticker.last);
+              ai.precise_entry = livePrice;
+              ai.precise_sl = livePrice * 0.97; // 3% SL
+              ai.precise_tp = livePrice * 1.06; // 6% TP
+              console.log(`│  ⚠️ Menggunakan harga live: Entry Rp ${Math.round(livePrice).toLocaleString()} │`);
+              console.log(`│  ⚠️ Auto SL/TP: ${Math.round(ai.precise_sl).toLocaleString()} / ${Math.round(ai.precise_tp).toLocaleString()} │`);
+            } else {
+              console.log(`│  STATUS : REJECTED — AI tidak berikan target presisi│`);
+              console.log(`└${sep}┘`);
+              continue;
+            }
           }
 
           // ===== CRITICAL GUARD #1: Duplicate Order Protection =====

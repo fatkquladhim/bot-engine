@@ -1,10 +1,11 @@
 import axios from 'axios';
 import { IndodaxPublicAPI } from '../core/IndodaxPublicAPI';
 import { MarketIntelligence } from './MarketIntelligence';
-import { MacroRegimeEngine } from '../predator/macro';
+import { MacroRegimeEngine, MarketRegime } from '../predator/macro';
 import { DynamicScanner } from '../predator/scanner';
 import { NarrativeEngine } from '../narrative/engine';
 import { CacheDomain } from '../modules/system/CacheDomain';
+import { SMCEngine } from '../predator/smc';
 
 // ============================================================
 // TYPES
@@ -32,6 +33,14 @@ export interface CoinProfile {
   btcContextScore: number;  // Max 20
   spreadScore: number;      // Max 10
   rrScore: number;          // Max 10
+  // Additional Scores for Narrative Trading System
+  narrativeScore: number;   // Narrative strength (0-100)
+  smartMoneyProbability: number; // Smart money likelihood (0-100)
+  volumeAcceleration: number; // Volume spike indicator (0-100)
+  hypeLevel: number;        // Social hype level (0-100)
+  explosivePotential: number; // Breakout potential (0-100)
+  riskLevel: number;        // Risk assessment (0-100, lower is better)
+  entryConfidence: number;  // Overall entry confidence (0-100)
   totalScore: number;       // Max 100
   // Signal
   entry: number;
@@ -50,7 +59,7 @@ export interface MacroContext {
   fearGreedIndex: number;   // 0-100 (0=Fear, 100=Greed)
   fearGreedLabel: string;
   btcDominance: number;     // % BTC dominance
-  marketRegime: 'RISK_ON' | 'RISK_OFF' | 'NEUTRAL';
+  marketRegime: 'RISK_ON' | 'RISK_OFF' | 'NEUTRAL' | 'EXTREME_RISK_ON';
   macroScore: number;       // 0-20
 }
 
@@ -82,13 +91,18 @@ export class AlphaHunter {
     const filters = DynamicScanner.getFilters(regime);
     const narrativeReport = await NarrativeEngine.generateReport();
     
-    const macro: MacroContext = {
-      fearGreedIndex: metrics.fearAndGreed,
-      fearGreedLabel: metrics.fearAndGreed > 60 ? 'Greed' : metrics.fearAndGreed < 40 ? 'Fear' : 'Neutral',
-      btcDominance: 50, 
-      marketRegime: regime === 'PREDATOR' ? 'RISK_ON' : regime === 'DEFENSE' ? 'RISK_OFF' : 'NEUTRAL',
-      macroScore: metrics.fearAndGreed / 5
-    };
+     const macro: MacroContext = {
+       fearGreedIndex: metrics.fearAndGreed,
+       fearGreedLabel: metrics.fearAndGreed > 60 ? 'Greed' : metrics.fearAndGreed < 40 ? 'Fear' : 'Neutral',
+       btcDominance: metrics.btcDominance || 50, 
+       marketRegime: regime === MarketRegime.MEME_MANIA ? 'EXTREME_RISK_ON' : 
+                    regime === 'PREDATOR' ? 'RISK_ON' : 
+                    regime === 'DEFENSE' ? 'RISK_OFF' : 'NEUTRAL',
+       // Increased macroScore for more aggressive regimes
+       macroScore: regime === MarketRegime.MEME_MANIA ? 20 : 
+                  regime === MarketRegime.PREDATOR ? Math.min(20, metrics.fearAndGreed / 4) : 
+                  metrics.fearAndGreed / 5
+     };
     
     console.log(`\n🌐 [MACRO] F&G: ${metrics.fearAndGreed} | BTC Trend: ${metrics.btcTrend} | Regime: ${regime}`);
     console.log(`🧠 [NARRATIVE] Hot: ${narrativeReport.hotNow.slice(0, 3).map(n => `${n.type} (${n.score})`).join(', ')}`);
@@ -185,53 +199,56 @@ export class AlphaHunter {
       const fundamentalScore = this.scoreFundamental(cg, rank);
       const technicalScore = this.scoreTechnical(priceIdr, high24h, low24h, volIdr, spread, positionIn24hRange);
 
-      // Narrative Score
-      const narrativeType = require('../narrative/mapper').NarrativeMapper.getNarrativeForPair(pair);
-      const narrativeInsight = narrativeReport.hotNow.find(n => n.type === narrativeType);
-      const narrativeScore = narrativeInsight ? narrativeInsight.score / 5 : 5;
+       // Diversifikasi bonus: bluechip dan midcap dapat bonus agar tidak kalah dari meme
+       let diversityBonus = 0;
+       if (type === 'BLUECHIP') diversityBonus = 12;       // BTC, ETH, SOL, BNB, XRP
+       else if (type === 'MIDCAP') diversityBonus = 6;     // ADA, DOT, AVAX, dll
+       // Meme coin tidak dapat bonus — mereka sudah dapat dari narrative
 
-      // Diversifikasi bonus: bluechip dan midcap dapat bonus agar tidak kalah dari meme
-      let diversityBonus = 0;
-      if (type === 'BLUECHIP') diversityBonus = 12;       // BTC, ETH, SOL, BNB, XRP
-      else if (type === 'MIDCAP') diversityBonus = 6;     // ADA, DOT, AVAX, dll
-      // Meme coin tidak dapat bonus — mereka sudah dapat dari narrative
-
-      const preScore = fundamentalScore + technicalScore + narrativeScore + diversityBonus + penalty;
+       const preScore = fundamentalScore + technicalScore + diversityBonus + penalty;
 
 
-      // Entry/SL/TP menggunakan ATR-based (akan di-override di step Market Intelligence)
-      // SL sementara: max 3% di bawah harga sekarang (bukan 24h low yang bisa sangat jauh)
-      const entry = priceIdr;
-      const sl = Math.max(low24h, priceIdr * 0.97); // max 3% SL, tidak lebih rendah dari 24h low
-      const tp1 = entry * 1.04;
-      const tp2 = entry * 1.08;
+       // Entry/SL/TP menggunakan ATR-based (akan di-override di step Market Intelligence)
+       // SL sementara: max 3% di bawah harga sekarang (bukan 24h low yang bisa sangat jauh)
+       const entry = priceIdr;
+       const sl = Math.max(low24h, priceIdr * 0.97); // max 3% SL, tidak lebih rendah dari 24h low
+       const tp1 = entry * 1.04;
+       const tp2 = entry * 1.08;
 
-      // Hitung komponen individual untuk totalScore recalculation di step Market Intelligence
-      const volScore = volIdr > 2_000_000_000 ? 15 : volIdr > 500_000_000 ? 12 : volIdr > 100_000_000 ? 8 : 3;
-      const sprdScore = spread < 0.2 ? 10 : spread < 0.5 ? 7 : spread < 0.8 ? 4 : 0;
-      const momScore = positionIn24hRange >= 20 && positionIn24hRange <= 50 ? 20 :
-                       positionIn24hRange > 50 && positionIn24hRange <= 80 ? 15 :
-                       positionIn24hRange > 80 ? 5 : 10;
+       // Hitung komponen individual untuk totalScore recalculation di step Market Intelligence
+       const volScore = volIdr > 2_000_000_000 ? 15 : volIdr > 500_000_000 ? 12 : volIdr > 100_000_000 ? 8 : 3;
+       const sprdScore = spread < 0.2 ? 10 : spread < 0.5 ? 7 : spread < 0.8 ? 4 : 0;
+       const momScore = positionIn24hRange >= 20 && positionIn24hRange <= 50 ? 20 :
+                        positionIn24hRange > 50 && positionIn24hRange <= 80 ? 15 :
+                        positionIn24hRange > 80 ? 5 : 10;
 
-      candidates.push({
-        symbol, pair, name: cg?.name || symbol.toUpperCase(),
-        type, marketCapRank: rank, marketCapUsd: mcapUsd,
-        priceIdr, high24h, low24h, volIdr, spread,
-        positionIn24hRange,
-        trendScore: 0,
-        momentumScore: momScore,
-        volumeScore: volScore,
-        btcContextScore: macro.macroScore,
-        spreadScore: sprdScore,
-        rrScore: 0,
-        totalScore: Math.max(0, preScore),
-        entry: priceIdr,
-        sl: Math.max(low24h, priceIdr * 0.97),
-        tp1: priceIdr * 1.04,
-        tp2: priceIdr * 1.08,
-        whyBuy: '',
-        rejected: false
-      });
+        candidates.push({
+          symbol, pair, name: cg?.name || symbol.toUpperCase(),
+          type, marketCapRank: rank, marketCapUsd: mcapUsd,
+          priceIdr, high24h, low24h, volIdr, spread,
+          positionIn24hRange,
+          trendScore: 0,
+          momentumScore: momScore,
+          volumeScore: volScore,
+          btcContextScore: macro.macroScore,
+          spreadScore: sprdScore,
+          rrScore: 0,
+          // Placeholder values for narrative trading scores (will be updated later)
+          narrativeScore: 0,
+          smartMoneyProbability: 0,
+          volumeAcceleration: 0,
+          hypeLevel: 0,
+          explosivePotential: 0,
+          riskLevel: 0,
+          entryConfidence: 0,
+          totalScore: Math.max(0, preScore),
+          entry: priceIdr,
+          sl: Math.max(low24h, priceIdr * 0.97),
+          tp1: priceIdr * 1.04,
+          tp2: priceIdr * 1.08,
+          whyBuy: '',
+          rejected: false
+        });
 
     }
 
@@ -246,64 +263,74 @@ export class AlphaHunter {
 
     console.log(`\n🧠 [MARKET INTELLIGENCE] Menganalisa Trend, Orderbook, dan ATR untuk Top ${preValid.length} kandidat...`);
     
-    // Process sequentially or in small batches to avoid rate limits
-    for (const c of preValid) {
-      // Delay 300ms to avoid burst block
-      await new Promise(r => setTimeout(r, 300));
+     // Process sequentially or in small batches to avoid rate limits
+     for (const c of preValid) {
+       // Delay 300ms to avoid burst block
+       await new Promise(r => setTimeout(r, 300));
 
-      const [trend, ob, atr, vol5mBars] = await Promise.all([
-        MarketIntelligence.analyzeTrend(c.pair),
-        MarketIntelligence.analyzeOrderbook(c.pair),
-        MarketIntelligence.calculateATRTargets(c.pair, c.priceIdr),
-        MarketIntelligence.fetchCandles(c.pair, '5')
-      ]);
+        const [trend, ob, atr, vol5mBars, smcSignal] = await Promise.all([
+          MarketIntelligence.analyzeTrend(c.pair),
+          MarketIntelligence.analyzeOrderbook(c.pair),
+          MarketIntelligence.calculateATRTargets(c.pair, c.priceIdr),
+          MarketIntelligence.fetchCandles(c.pair, '5'),
+          SMCEngine.analyze(c.pair)
+        ]);
 
-      const recentVolIdr = vol5mBars.slice(-3).reduce((sum, b) => sum + b.volume, 0);
-      
-      c.trendAlignment = trend.alignment;
-      c.obSummary = ob.summary;
+       const recentVolIdr = vol5mBars.slice(-3).reduce((sum, b) => sum + b.volume, 0);
+       
+       c.trendAlignment = trend.alignment;
+       c.obSummary = ob.summary;
 
-      // === TREND SCORE (Max 25) ===
-      c.trendScore = trend.alignment === 'BULLISH'      ? 25 :
-                     trend.alignment === 'MOMENTUM'     ? 22 :
-                     trend.alignment === 'RANGE_BREAKOUT' ? 20 :
-                     trend.alignment === 'LEAN_BULLISH' ? 18 :
-                     trend.alignment === 'ACCUMULATION' ? 14 : // Setup bagus untuk entry awal
-                     trend.alignment === 'MIXED'        ? 8  : 0;
+       // === TREND SCORE (Max 25) ===
+       c.trendScore = trend.alignment === 'BULLISH'      ? 25 :
+                      trend.alignment === 'MOMENTUM'     ? 22 :
+                      trend.alignment === 'RANGE_BREAKOUT' ? 20 :
+                      trend.alignment === 'LEAN_BULLISH' ? 18 :
+                      trend.alignment === 'ACCUMULATION' ? 14 : // Setup bagus untuk entry awal
+                      trend.alignment === 'MIXED'        ? 8  : 0;
 
-      if (trend.trendScore > 10) c.trendScore = Math.min(25, c.trendScore + 5);
-      if (trend.rsiRegime === 'OVERSOLD')   c.trendScore = Math.min(25, c.trendScore + 5);
-      else if (trend.rsiRegime === 'OVERBOUGHT') c.trendScore = Math.max(0, c.trendScore - 10);
+       if (trend.trendScore > 10) c.trendScore = Math.min(25, c.trendScore + 5);
+       if (trend.rsiRegime === 'OVERSOLD')   c.trendScore = Math.min(25, c.trendScore + 5);
+       else if (trend.rsiRegime === 'OVERBOUGHT') c.trendScore = Math.max(0, c.trendScore - 10);
 
-      // Risk/Reward Score (Max 10)
-      c.rrScore = atr.rrRatio >= 2.0 ? 10 : atr.rrRatio >= 1.5 ? 6 : atr.rrRatio >= 1.0 ? 3 : 0;
+       // Risk/Reward Score (Max 10)
+       c.rrScore = atr.rrRatio >= 2.0 ? 10 : atr.rrRatio >= 1.5 ? 6 : atr.rrRatio >= 1.0 ? 3 : 0;
 
-      // Final Total Score Recalculation
-      c.totalScore = c.trendScore + c.momentumScore + c.volumeScore + c.btcContextScore + c.spreadScore + c.rrScore + ob.obScore;
-      
-      console.log(`   - ${c.pair.toUpperCase()} | Trend: ${c.trendAlignment} | RSI: ${trend.rsiRegime} | Score: ${c.totalScore}`);
+        // Final Total Score Recalculation with SMC integration
+        c.totalScore = c.trendScore + c.momentumScore + c.volumeScore + c.btcContextScore + c.spreadScore + c.rrScore + ob.obScore + (smcSignal.smcScore * 0.5); // Scale SMC score to fit
 
-      // Update Targets with ATR
-      c.entry = c.priceIdr;
-      c.sl = atr.sl;
-      c.tp1 = atr.tp1;
-      c.tp2 = atr.tp2;
+       // Calculate additional scores for narrative trading system
+       c.narrativeScore = await NarrativeEngine.getNarrativeScore(c.pair);
+       c.smartMoneyProbability = Math.min(100, smcSignal.smcScore * 2); // Convert SMC score to probability
+       c.volumeAcceleration = Math.min(100, (c.volIdr > 0) ? Math.log10(c.volIdr) * 10 : 0); // Log scale volume
+       c.hypeLevel = await this.getHypeLevelForPair(c.pair); // Get hype level for this pair
+       c.explosivePotential = this.calculateExplosivePotential(trend, smcSignal, c.volIdr, c.priceIdr, c.high24h, c.low24h);
+       c.riskLevel = this.calculateRiskLevel(c.spread, c.volIdr, trend, smcSignal);
+       c.entryConfidence = this.calculateEntryConfidence(c.narrativeScore, c.smartMoneyProbability, c.volumeAcceleration, c.hypeLevel, c.explosivePotential, c.riskLevel, trend);
 
-      // Hard Filters (Refined with Dynamic Volume)
-      if (trend.alignment === 'BEARISH' || trend.alignment === 'LEAN_BEARISH') {
-        c.rejected = true;
-        c.rejectReason = `Downtrend (${trend.alignment})`;
-        rejectedDowntrend++;
-      } else if (ob.hasSpoofWall) {
-        c.rejected = true;
-        c.rejectReason = 'Terdeteksi Spoof Wall (Manipulasi)';
-        rejectedSpoof++;
-      } else if (recentVolIdr < 200000 && c.volIdr < 50_000_000 && c.totalScore < 85) { 
-        c.rejected = true;
-        c.rejectReason = `Volume mati (15m: Rp ${Math.round(recentVolIdr).toLocaleString()}, 24h: Rp ${Math.round(c.volIdr).toLocaleString()})`;
-        rejectedVolume++;
-      }
-    }
+       console.log(`   - ${c.pair.toUpperCase()} | Trend: ${c.trendAlignment} | RSI: ${trend.rsiRegime} | Score: ${c.totalScore}`);
+
+       // Update Targets with ATR
+       c.entry = c.priceIdr;
+       c.sl = atr.sl;
+       c.tp1 = atr.tp1;
+       c.tp2 = atr.tp2;
+
+       // Hard Filters (Refined with Dynamic Volume)
+       if (trend.alignment === 'BEARISH' || trend.alignment === 'LEAN_BEARISH') {
+         c.rejected = true;
+         c.rejectReason = `Downtrend (${trend.alignment})`;
+         rejectedDowntrend++;
+       } else if (ob.hasSpoofWall) {
+         c.rejected = true;
+         c.rejectReason = 'Terdeteksi Spoof Wall (Manipulasi)';
+         rejectedSpoof++;
+       } else if (recentVolIdr < 200000 && c.volIdr < 50_000_000 && c.totalScore < 85) { 
+         c.rejected = true;
+         c.rejectReason = `Volume mati (15m: Rp ${Math.round(recentVolIdr).toLocaleString()}, 24h: Rp ${Math.round(c.volIdr).toLocaleString()})`;
+         rejectedVolume++;
+       }
+     }
 
     // Final Rank after Intelligence (CTO REVISION)
     const sorted = preValid
@@ -322,19 +349,27 @@ export class AlphaHunter {
     console.log(`   ✗ ${rejectedSpoof} ditolak: Spoof Wall / Manipulasi`);
     
     console.log(`\n🔥 [CANDIDATES]`);
-    if (valid.length > 0) {
-      valid.forEach(c => console.log(`   ✅ ENTRY     : ${c.pair.toUpperCase()} (Score: ${c.totalScore.toFixed(1)}) | Trend: ${c.trendAlignment}`));
-    } else {
-      console.log(`   ❌ ENTRY     : No candidates passed threshold (${filters.minScore})`);
-      // Fallback: If no entry but high watchlist, show them clearly
-      if (watchlistCandidates.length > 0) {
-        console.log(`   💡 Fallback : Picking top 3 from watchlist for Predator targeting.`);
-      }
-    }
+     if (valid.length > 0) {
+       valid.forEach(c => console.log(`   ✅ ENTRY     : ${c.pair.toUpperCase()} (Score: ${c.totalScore.toFixed(1)}) | 
+   Narrative: ${c.narrativeScore.toFixed(0)} | Momentum: ${c.momentumScore.toFixed(0)} | 
+   Smart Money: ${c.smartMoneyProbability.toFixed(0)} | Volume Accel: ${c.volumeAcceleration.toFixed(0)} | 
+   Hype: ${c.hypeLevel.toFixed(0)} | Explosive: ${c.explosivePotential.toFixed(0)} | 
+   Risk: ${c.riskLevel.toFixed(0)} | Confidence: ${c.entryConfidence.toFixed(0)} | Trend: ${c.trendAlignment}`));
+     } else {
+       console.log(`   ❌ ENTRY     : No candidates passed threshold (${filters.minScore})`);
+       // Fallback: If no entry but high watchlist, show them clearly
+       if (watchlistCandidates.length > 0) {
+         console.log(`   💡 Fallback : Picking top 3 from watchlist for Predator targeting.`);
+       }
+     }
 
-    if (watchlistCandidates.length > 0) {
-      watchlistCandidates.slice(0, 3).forEach(c => console.log(`   👀 WATCHLIST : ${c.pair.toUpperCase()} (Score: ${c.totalScore.toFixed(1)}) | Trend: ${c.trendAlignment}`));
-    }
+     if (watchlistCandidates.length > 0) {
+       watchlistCandidates.slice(0, 3).forEach(c => console.log(`   👀 WATCHLIST : ${c.pair.toUpperCase()} (Score: ${c.totalScore.toFixed(1)}) | 
+   Narrative: ${c.narrativeScore.toFixed(0)} | Momentum: ${c.momentumScore.toFixed(0)} | 
+   Smart Money: ${c.smartMoneyProbability.toFixed(0)} | Volume Accel: ${c.volumeAcceleration.toFixed(0)} | 
+   Hype: ${c.hypeLevel.toFixed(0)} | Explosive: ${c.explosivePotential.toFixed(0)} | 
+   Risk: ${c.riskLevel.toFixed(0)} | Confidence: ${c.entryConfidence.toFixed(0)} | Trend: ${c.trendAlignment}`));
+     }
 
     // FINAL REJECTION LOG (Why didn't they make it?)
     const failedToPass = preValid.filter(c => c.rejected).slice(0, 5);
@@ -525,22 +560,167 @@ Gunakan format JSON array eksak:
         const target = candidates.find(c => c.pair === item.pair.toLowerCase());
         if (target) target.whyBuy = item.whyBuy;
       }
-    } catch {
-      // AI enrichment is best-effort, no crash
-    }
-  }
+     } catch {
+       // AI enrichment is best-effort, no crash
+     }
+   }
 
-  // ============================================================
-  // HELPER
-  // ============================================================
-  private makeRejected(symbol: string, pair: string, price: number, vol: number, reason: string): CoinProfile {
-    return {
-      symbol, pair, name: symbol.toUpperCase(),
-      type: 'UNKNOWN', marketCapRank: 9999, marketCapUsd: 0,
-      priceIdr: price, high24h: 0, low24h: 0, volIdr: vol, spread: 99,
-      positionIn24hRange: 0, trendScore: 0, momentumScore: 0, volumeScore: 0,
-      btcContextScore: 0, spreadScore: 0, rrScore: 0, totalScore: 0, entry: price, sl: 0, tp1: 0, tp2: 0,
-      whyBuy: '', rejected: true, rejectReason: reason
-    };
-  }
+   // ============================================================
+   // HELPER METHODS FOR NARRATIVE TRADING SYSTEM
+   // ============================================================
+
+   private async getHypeLevelForPair(pair: string): Promise<number> {
+     // Get hype level from social media and search trends
+     try {
+       const { SocialHypeRadar } = require('../narrative/social');
+       const { NarrativeMapper } = require('../narrative/mapper');
+       const narrativeType = NarrativeMapper.getNarrativeForPair(pair);
+       const hypeScore = await SocialHypeRadar.getHypeScore(narrativeType);
+       return Math.min(100, hypeScore * 2); // Scale to 0-100
+     } catch (error) {
+       // Fallback to basic volume-based hype
+       return 50;
+     }
+   }
+
+   private calculateExplosivePotential(
+     trend: any,
+     smcSignal: any,
+     volIdr: number,
+     priceIdr: number,
+     high24h: number,
+     low24h: number
+   ): number {
+     let score = 0;
+
+     // Trend alignment bonus
+     if (trend.alignment === 'MOMENTUM' || trend.alignment === 'RANGE_BREAKOUT') {
+       score += 25;
+     } else if (trend.alignment === 'BULLISH' || trend.alignment === 'LEAN_BULLISH') {
+       score += 15;
+     }
+
+     // SMC signals
+     if (smcSignal.bos === 'BULLISH') score += 20;
+     if (smcSignal.choch === 'BULLISH') score += 15;
+     if (smcSignal.liquiditySweep === 'SELL_SIDE') score += 25; // Reclaimed liquidity
+
+     // Price position in range (closer to low = higher explosive potential)
+     const range = high24h - low24h;
+     if (range > 0) {
+       const positionFromLow = (priceIdr - low24h) / range;
+       if (positionFromLow < 0.3) score += 20; // Near bottom
+       else if (positionFromLow < 0.5) score += 10;
+     }
+
+     // Volume vs price action
+     if (volIdr > 0 && priceIdr > 0) {
+       const volRatio = volIdr / (priceIdr * 1000); // Normalize volume
+       if (volRatio > 0.5) score += 15;
+       else if (volRatio > 0.2) score += 10;
+     }
+
+     return Math.min(100, score);
+   }
+
+   private calculateRiskLevel(
+     spread: number,
+     volIdr: number,
+     trend: any,
+     smcSignal: any
+   ): number {
+     let risk = 0;
+
+     // Spread risk (higher spread = higher risk)
+     if (spread > 2.0) risk += 25;
+     else if (spread > 1.0) risk += 15;
+     else if (spread > 0.5) risk += 5;
+
+     // Volume risk (too low volume = higher risk)
+     if (volIdr < 10000000) risk += 20; // < 10M IDR
+     else if (volIdr < 50000000) risk += 10; // < 50M IDR
+
+     // Trend risk
+     if (trend.alignment === 'BEARISH' || trend.alignment === 'LEAN_BEARISH') {
+       risk += 20;
+     } else if (trend.alignment === 'MIXED') {
+       risk += 10;
+     }
+
+     // SMC risk factors
+     if (smcSignal.bos === 'BEARISH') risk += 15;
+     if (smcSignal.liquiditySweep === 'BUY_SIDE') risk += 20; // Bull trap
+
+     // RSI extremes
+     if (trend.rsiRegime === 'OVERBOUGHT') risk += 15;
+     else if (trend.rsiRegime === 'OVERSOLD') risk -= 10; // Oversold can be opportunity
+
+     return Math.min(100, Math.max(0, risk));
+   }
+
+   private calculateEntryConfidence(
+     narrativeScore: number,
+     smartMoneyProbability: number,
+     volumeAcceleration: number,
+     hypeLevel: number,
+     explosivePotential: number,
+     riskLevel: number,
+     trend: any
+   ): number {
+     // Weighted calculation of entry confidence
+     let confidence = 0;
+
+     // Narrative strength (30% weight)
+     confidence += (narrativeScore / 100) * 30;
+
+     // Smart money probability (25% weight)
+     confidence += (smartMoneyProbability / 100) * 25;
+
+     // Volume acceleration (15% weight)
+     confidence += (volumeAcceleration / 100) * 15;
+
+     // Hype level (10% weight)
+     confidence += (hypeLevel / 100) * 10;
+
+     // Explosive potential (15% weight)
+     confidence += (explosivePotential / 100) * 15;
+
+     // Risk adjustment (inverse - lower risk = higher confidence)
+     const riskAdjustment = (100 - riskLevel) / 100;
+     confidence *= riskAdjustment;
+
+     // Trend bonus/penalty
+     if (trend.alignment === 'MOMENTUM' || trend.alignment === 'RANGE_BREAKOUT') {
+       confidence *= 1.2; // Boost for strong trends
+     } else if (trend.alignment === 'BULLISH' || trend.alignment === 'LEAN_BULLISH') {
+       confidence *= 1.1;
+     } else if (trend.alignment === 'BEARISH' || trend.alignment === 'LEAN_BEARISH') {
+       confidence *= 0.7; // Penalty for bearish trends
+     }
+
+     return Math.min(100, Math.max(0, confidence));
+   }
+
+   // ============================================================
+   // HELPER
+   // ============================================================
+   private makeRejected(symbol: string, pair: string, price: number, vol: number, reason: string): CoinProfile {
+     return {
+       symbol, pair, name: symbol.toUpperCase(),
+       type: 'UNKNOWN', marketCapRank: 9999, marketCapUsd: 0,
+       priceIdr: price, high24h: 0, low24h: 0, volIdr: vol, spread: 99,
+       positionIn24hRange: 0, trendScore: 0, momentumScore: 0, volumeScore: 0,
+       btcContextScore: 0, spreadScore: 0, rrScore: 0,
+       // New narrative trading scores
+       narrativeScore: 0,
+       smartMoneyProbability: 0,
+       volumeAcceleration: 0,
+       hypeLevel: 0,
+       explosivePotential: 0,
+       riskLevel: 100, // Maximum risk for rejected coins
+       entryConfidence: 0,
+       totalScore: 0, entry: price, sl: 0, tp1: 0, tp2: 0,
+       whyBuy: '', rejected: true, rejectReason: reason
+     };
+   }
 }

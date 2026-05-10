@@ -4,7 +4,8 @@ import { MarketIntelligence } from '../scanner/MarketIntelligence';
 export enum MarketRegime {
   DEFENSE = 'DEFENSE',   // High fear, BTC/ETH focus, tight SL
   WAR = 'WAR',           // Neutral market, swing trade strong alts
-  PREDATOR = 'PREDATOR'  // Bullish/Altseason, aggressive on memes/lowcaps
+  PREDATOR = 'PREDATOR', // Bullish/Altseason, aggressive on memes/lowcaps
+  MEME_MANIA = 'MEME_MANIA' // Extreme meme frenzy, ultra-aggressive on memes
 }
 
 export interface MacroMetrics {
@@ -28,23 +29,32 @@ export class MacroRegimeEngine {
       return this.cachedResult;
     }
 
-    try {
-      const metrics = await this.fetchMetrics();
-      let regime = MarketRegime.WAR;
+     try {
+       const metrics = await this.fetchMetrics();
+       let regime = MarketRegime.WAR;
 
-      // Logic for PREDATOR MODE
-      if (metrics.fearAndGreed > 60 && metrics.btcTrend === 'UP') {
-        regime = MarketRegime.PREDATOR;
-      }
-      
-      // Logic for DEFENSE MODE
-      if (metrics.fearAndGreed < 40 || metrics.btcTrend === 'DOWN') {
-        regime = MarketRegime.DEFENSE;
-      }
+       // Enhanced altseason detection
+       const isAltseason = this.detectAltseason(metrics);
+       
+       // Logic for MEME_MANIA MODE (highest aggression)
+       if (metrics.fearAndGreed > 80 && metrics.altcoinVolume > 3.0) {
+         regime = MarketRegime.MEME_MANIA;
+       }
+       
+       // Logic for PREDATOR MODE (bullish/altseason)
+       else if ((metrics.fearAndGreed > 60 && metrics.btcTrend === 'UP') || isAltseason) {
+         regime = MarketRegime.PREDATOR;
+       }
+       
+       // Logic for DEFENSE MODE
+       if (metrics.fearAndGreed < 40 || metrics.btcTrend === 'DOWN') {
+         regime = MarketRegime.DEFENSE;
+       }
 
-      // Overrides
-      if (metrics.fearAndGreed < 25) regime = MarketRegime.DEFENSE; // Extreme Fear
-      if (metrics.fearAndGreed > 75) regime = MarketRegime.PREDATOR; // Extreme Greed / Mooning
+       // Overrides
+       if (metrics.fearAndGreed < 25) regime = MarketRegime.DEFENSE; // Extreme Fear
+       if (metrics.fearAndGreed > 85) regime = MarketRegime.MEME_MANIA; // Extreme meme frenzy
+       else if (metrics.fearAndGreed > 75) regime = MarketRegime.PREDATOR; // Extreme Greed / Mooning
 
       const result = { regime, metrics };
       this.cachedResult = result;
@@ -65,9 +75,26 @@ export class MacroRegimeEngine {
         } 
       };
     }
-  }
+   }
 
-  private static async fetchMetrics(): Promise<MacroMetrics> {
+   /**
+   * Detect altseason conditions
+   * Altseason is when BTC dominance is falling AND altcoins are gaining strength
+   */
+   private static detectAltseason(metrics: MacroMetrics): boolean {
+     // Altseason indicators:
+     // 1. BTC dominance decreasing (we use altcoinVolume as proxy)
+     // 2. ETH showing strength relative to BTC
+     // 3. Significant altcoin volume
+     
+     const btcDominanceTrend = metrics.btcDominance < 50; // Below 50% suggests altseason
+     const ethStrength = metrics.ethStrength > 1.2; // ETH outperforming BTC
+     const significantAltVolume = metrics.altcoinVolume > 1.8; // Strong altcoin volume
+     
+     return (btcDominanceTrend || ethStrength) && significantAltVolume;
+   }
+
+   private static async fetchMetrics(): Promise<MacroMetrics> {
     const [fngRes, btcTrendRes, ethTrendRes, globalRes] = await Promise.allSettled([
       axios.get(this.FNG_API),
       MarketIntelligence.analyzeTrend('btc_idr'),

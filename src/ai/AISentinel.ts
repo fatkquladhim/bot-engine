@@ -141,7 +141,14 @@ export class AISentinel {
         const avgScore = aiSignals.reduce((s, r) => s + r.score, 0) / aiSignals.length;
         console.log(`   ✅ [COUNCIL] ${pair.toUpperCase()}: ${aiSignals.length}/3 | BUY: ${buyVotes} | Avg: ${avgScore.toFixed(0)}`);
 
-        const evaluation = await this.predatorStrategy.evaluateTrade(pair, aiSignals, this.alphaScores[pair] || 0);
+        const evaluation = await this.predatorStrategy.evaluateTrade(pair, aiSignals, this.alphaScores[pair] || 0, {
+          narrativeScore: this.alphaScores[pair] ? await this.getAlphaHunterNarrativeScore(pair) : 50,
+          hypeLevel: 50, // Default, will be enhanced when AlphaHunter scores are integrated
+          volumeAcceleration: this.alphaScores[pair] ? (this.alphaScores[pair] > 70 ? 80 : 50) : 50,
+          smartMoneyProbability: 50,
+          explosivePotential: this.alphaScores[pair] || 50,
+          momentumScore: 50
+        });
 
         const sep = '━'.repeat(52);
         const bias = (await MarketIntelligence.analyzeTrend(pair)).alignment;
@@ -179,9 +186,24 @@ export class AISentinel {
         console.log(`   ${sep}`);
 
         if (evaluation.shouldBuy) {
-          const finalRes = aiSignals[0];
+          const finalRes = aiSignals[0] || {} as AIResult;
           finalRes.score = evaluation.score;
           finalRes.pair = pair;
+          finalRes.action = evaluation.action === 'MARKET_BUY' ? 'BUY' : 
+                            evaluation.action === 'LIMIT_ENTRY' ? 'BUY' : 
+                            evaluation.action;
+          finalRes.confidence = evaluation.score >= 70 ? 'HIGH' : 
+                               evaluation.score >= 50 ? 'MID' : 'LOW';
+          finalRes.edge_strength = evaluation.score >= 80 ? 'Elite' : 
+                                  evaluation.score >= 60 ? 'Good' : 'Weak';
+          finalRes.why_now = evaluation.reason;
+          finalRes.precise_entry = evaluation.targets?.sl ? 
+            parseFloat((await IndodaxPublicAPI.getTicker(pair)).ticker.last) : 
+            (finalRes.precise_entry || parseFloat((await IndodaxPublicAPI.getTicker(pair)).ticker.last));
+          if (evaluation.targets) {
+            finalRes.precise_sl = evaluation.targets.sl;
+            finalRes.precise_tp = evaluation.targets.tp1;
+          }
           return finalRes;
         }
         return null;
@@ -257,6 +279,14 @@ SKORING: 80-100=ELITE | 60-79=VALID | 40-59=WAIT | 0-39=AVOID
 
 RESPON JSON SAJA:
 {"action":"BUY"|"SELL"|"AVOID","score":number,"regime":"BULLISH"|"SIDEWAYS"|"BEARISH","confidence":"HIGH"|"MID"|"LOW","precise_entry":number,"precise_sl":number,"precise_tp":number,"why_now":"alasan 1 kalimat"}`.trim();
+  }
+
+  private async getAlphaHunterNarrativeScore(pair: string): Promise<number> {
+    // Try to get narrative score from AlphaHunter results
+    // The alphaScores contain the totalScore which includes narrative components
+    const alphaScore = this.alphaScores[pair] || 50;
+    // Scale AlphaHunter score (0-100) to narrative-appropriate range
+    return Math.min(100, alphaScore);
   }
 
   private parseAI(raw: string, modelName: string): AIResult | null {
