@@ -1,6 +1,22 @@
 import { PrismaClient } from '@prisma/client';
+import { PrismaPg } from '@prisma/adapter-pg';
+import pg from 'pg';
+import * as dotenv from 'dotenv';
 
-const prisma = new PrismaClient();
+dotenv.config();
+
+const connectionString = process.env.DATABASE_URL;
+
+const pool = new pg.Pool({ 
+  connectionString,
+  max: 5,
+  idleTimeoutMillis: 30000,
+  connectionTimeoutMillis: 2000,
+});
+
+const adapter = new PrismaPg(pool);
+
+const prisma = new PrismaClient({ adapter });
 
 async function resetTradeHistory() {
   console.log('🔄 [RESET TRADE HISTORY] Memulai reset...\n');
@@ -18,11 +34,7 @@ async function resetTradeHistory() {
     const deletedPerformance = await prisma.dailyPerformance.deleteMany({});
     console.log(`✅ Deleted ${deletedPerformance.count} daily performance records`);
 
-    // 3. Reset Activity Logs (optional - keeping for debugging)
-    // const deletedLogs = await prisma.activityLog.deleteMany({});
-    // console.log(`✅ Deleted ${deletedLogs.count} activity logs`);
-
-    // 4. Get remaining open positions
+    // 3. Get remaining open positions
     const openPositions = await prisma.analysis.findMany({
       where: { status: { in: ['OPEN', 'TRADING'] } }
     });
@@ -31,23 +43,15 @@ async function resetTradeHistory() {
       console.log(`   - ${p.assetName}: ${p.status} @ Rp ${p.entryPrice}`);
     });
 
-    // 5. Calculate new stats (should be 0 after reset)
-    const totalTrades = 0;
-    const winningTrades = 0;
-    const totalPnL = 0;
-    const winRate = 0;
-    const expectancy = 0;
-
     console.log(`\n📈 [RESET STATS]`);
-    console.log(`   Total Trades   : ${totalTrades}`);
-    console.log(`   Winning Trades: ${winningTrades}`);
-    console.log(`   Win Rate      : ${winRate}%`);
-    console.log(`   Total PnL     : Rp ${totalPnL.toLocaleString()}`);
-    console.log(`   Expectancy   : Rp ${expectancy.toLocaleString()}`);
+    console.log(`   Total Trades   : 0`);
+    console.log(`   Winning Trades: 0`);
+    console.log(`   Win Rate      : 0%`);
+    console.log(`   Total PnL     : Rp 0`);
+    console.log(`   Expectancy   : Rp 0`);
 
     console.log('\n✅ Trade History Reset Complete!');
-    console.log('   Next run: Bot akan mulai fresh dengan stats = 0');
-    console.log('   Performance filter akan skip (butuh 20 trades minimum)\n');
+    console.log('   Next run: Bot akan mulai fresh dengan stats = 0\n');
 
   } catch (error) {
     console.error('❌ Error resetting trade history:', error);
