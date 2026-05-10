@@ -27,7 +27,8 @@ export class ExitManager2 {
     entryPrice: number,
     currentSL: number,
     tpsHit: number[],
-    entryTimestamp?: number // unix ms, opsional untuk time-based exit
+    entryTimestamp?: number, // unix ms, opsional untuk time-based exit
+    customPlan?: ExitPlan // Custom TP/SL plan dari database
   ): PositionUpdate {
     const profitPct = (currentPrice - entryPrice) / entryPrice;
     
@@ -54,8 +55,8 @@ export class ExitManager2 {
       return { shouldClose: false, newSL: entryPrice * 1.04, closeReason: 'TRAILING_STOP' };
     }
 
-    // 4. Tiered TP
-    const plan = this.calculateInitialPlan(entryPrice);
+    // 4. Tiered TP - Gunakan custom plan jika ada, jika tidak hitung dari entry
+    const plan = customPlan || this.calculateInitialPlan(entryPrice);
     if (currentPrice >= plan.tp1 && !tpsHit.includes(1)) {
       return { shouldClose: false, tpHit: 1, closeReason: 'TP1_HIT' };
     }

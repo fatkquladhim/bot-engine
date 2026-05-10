@@ -434,7 +434,13 @@ async function runCLI() {
               
               // 1. Trailing Stop via ExitManager2
               const tpsHit = pos.tpHits || [];
-              const exitUpdate = ExitManager2.monitor(currentPrice, pos.entryPrice, pos.sl || pos.entryPrice * 0.96, tpsHit, pos.entryTimestamp);
+              const customPlan = { 
+                tp1: pos.tp1 || pos.entryPrice * 1.10, 
+                tp2: pos.tp2 || pos.entryPrice * 1.20, 
+                tp3: pos.entryPrice * 1.35, 
+                sl: pos.sl || pos.entryPrice * 0.96 
+              };
+              const exitUpdate = ExitManager2.monitor(currentPrice, pos.entryPrice, pos.sl || pos.entryPrice * 0.96, tpsHit, pos.entryTimestamp, customPlan);
 
               if (exitUpdate.newSL && exitUpdate.newSL > (pos.sl || 0)) {
                 engine.state.openPositions[pair].sl = exitUpdate.newSL;
@@ -693,7 +699,13 @@ async function runCLI() {
           const currentPrice = Number(ticker.last);
 
           // PREDATOR EXIT MANAGER 2.0
-          const update = ExitManager2.monitor(currentPrice, pos.entryPrice, pos.sl || pos.entryPrice * 0.95, pos.tpHits || []);
+          const customPlan2 = { 
+            tp1: pos.tp1 || pos.entryPrice * 1.10, 
+            tp2: pos.tp2 || pos.entryPrice * 1.20, 
+            tp3: pos.entryPrice * 1.35, 
+            sl: pos.sl || pos.entryPrice * 0.95 
+          };
+          const update = ExitManager2.monitor(currentPrice, pos.entryPrice, pos.sl || pos.entryPrice * 0.95, pos.tpHits || [], undefined, customPlan2);
 
           if (update.shouldClose) {
             const coin = pair.split('_')[0];
