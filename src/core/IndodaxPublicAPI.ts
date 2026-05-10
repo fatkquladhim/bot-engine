@@ -1,4 +1,5 @@
 import axios from 'axios';
+import { indodaxLimiter } from '../utils/RateLimiter';
 
 export interface TickerResponse {
   ticker: {
@@ -11,8 +12,9 @@ export interface PairInfo { id: string; symbol: string; base_currency: string; t
 
 export class IndodaxPublicAPI {
   private static baseURL = 'https://indodax.com/api';
-  // In-memory cache: key → { data, expiry }
   private static cache: Map<string, { data: any; expiry: number }> = new Map();
+  private static isGlobalPause = false;
+  private static pauseUntil = 0;
 
   private static getHeaders() {
     return {
@@ -34,58 +36,86 @@ export class IndodaxPublicAPI {
     this.cache.set(key, { data, expiry: Date.now() + ttlMs });
   }
 
-  public static async getTicker(pair: string): Promise<TickerResponse> {
-    // Ticker cache 30 detik — cukup untuk exit manager, tidak perlu real-time
-    const key = `ticker_${pair}`;
-    const cached = this.getCached<TickerResponse>(key);
+  private static async safeGet<T>(url: string, cacheKey: string, ttlMs: number): Promise<T> {
+    const cached = this.getCached<T>(cacheKey);
     if (cached) return cached;
-    const res = await axios.get<TickerResponse>(`${this.baseURL}/${pair}/ticker`, { headers: this.getHeaders(), timeout: 8000 });
-    this.setCached(key, res.data, 30_000);
-    return res.data;
+
+    if (this.isGlobalPause && Date.now() < this.pauseUntil) {
+      const wait = Math.ceil((this.pauseUntil - Date.now()) / 1000);
+      console.log(`   ⏸️ [INDODAX PAUSE] Waiting ${wait}s for rate limit reset...`);
+      await new Promise(r => setTimeout(r, Math.min(wait * 1000, 60000)));
+    }
+
+    return indodaxLimiter.schedule(() => axios.get(url, {
+      headers: this.getHeaders(),
+      timeout: 8000
+    }).then(res => {
+      this.setCached(cacheKey, res.data, ttlMs);
+      return res.data as T;
+    }).catch((e: any) => {
+      if (e?.response?.status === 429) {
+        const retryAfter = parseInt(e?.response?.headers?.['retry-after'] || '1800');
+        console.log(`   🚫 [INDODAX 429] Pausing all requests for ${retryAfter}s`);
+        this.isGlobalPause = true;
+        this.pauseUntil = Date.now() + (retryAfter * 1000);
+        this.cache.clear();
+        throw new Error(`Indodax rate limited. Retry after ${retryAfter}s`);
+      }
+      throw e;
+    }));
+  }
+
+  public static async getTicker(pair: string): Promise<TickerResponse> {
+    return this.safeGet<TickerResponse>(
+      `${this.baseURL}/${pair}/ticker`,
+      `ticker_${pair}`,
+      30_000
+    );
   }
 
   public static async getDepth(pair: string): Promise<DepthResponse> {
-    // Orderbook cache 60 detik
-    const key = `depth_${pair}`;
-    const cached = this.getCached<DepthResponse>(key);
-    if (cached) return cached;
-    const res = await axios.get<DepthResponse>(`${this.baseURL}/depth/${pair}`, { headers: this.getHeaders(), timeout: 8000 });
-    this.setCached(key, res.data, 60_000);
-    return res.data;
+    return this.safeGet<DepthResponse>(
+      `${this.baseURL}/depth/${pair}`,
+      `depth_${pair}`,
+      60_000
+    );
   }
 
   public static async getServerTime(): Promise<number> {
-    const res = await axios.get(`${this.baseURL}/server_time`, { headers: this.getHeaders(), timeout: 5000 });
-    return res.data.server_time;
+    const res = await this.safeGet<{ server_time: number }>(
+      `${this.baseURL}/server_time`,
+      'server_time',
+      5_000
+    );
+    return res.server_time;
   }
 
   public static async getAllPairs(): Promise<PairInfo[]> {
-    // Pairs list cache 1 jam — tidak berubah sering
-    const key = 'all_pairs';
-    const cached = this.getCached<PairInfo[]>(key);
-    if (cached) return cached;
-    const res = await axios.get(`${this.baseURL}/pairs`, { headers: this.getHeaders(), timeout: 10000 });
-    const raw = res.data;
-    if (!Array.isArray(raw)) return [];
-    const pairs = raw.map((p: any) => ({
-      id: p.id || '',
-      symbol: (p.traded_currency || '').toLowerCase(),
-      base_currency: (p.base_currency || '').toLowerCase(),
-      traded_currency: (p.traded_currency || '').toLowerCase(),
-      description: p.description || ''
-    })).filter((p: PairInfo) => p.base_currency === 'idr' && p.traded_currency !== 'idr');
-    this.setCached(key, pairs, 3_600_000);
-    return pairs;
+    return this.safeGet<PairInfo[]>(
+      `${this.baseURL}/pairs`,
+      'all_pairs',
+      3_600_000
+    ).then(raw => {
+      if (!Array.isArray(raw)) return [];
+      return (raw as any[]).map((p: any) => ({
+        id: p.id || '',
+        symbol: (p.traded_currency || '').toLowerCase(),
+        base_currency: (p.base_currency || '').toLowerCase(),
+        traded_currency: (p.traded_currency || '').toLowerCase(),
+        description: p.description || ''
+      })).filter((p: PairInfo) => p.base_currency === 'idr' && p.traded_currency !== 'idr');
+    });
   }
 
   public static async getAllTickers(): Promise<Record<string, any>> {
-    // All tickers cache 60 detik — 1 call untuk semua pair
-    const key = 'all_tickers';
-    const cached = this.getCached<Record<string, any>>(key);
-    if (cached) return cached;
-    const res = await axios.get('https://indodax.com/api/ticker_all', { headers: this.getHeaders(), timeout: 10000 });
-    const data = res.data.tickers || {};
-    this.setCached(key, data, 60_000);
-    return data;
+    return this.safeGet<{ tickers: Record<string, any> }>(
+      'https://indodax.com/api/ticker_all',
+      'all_tickers',
+      60_000
+    ).then(res => res.tickers || {});
+  }
+
+  public static clearCache() {
+    this.cache.clear();
   }
 }

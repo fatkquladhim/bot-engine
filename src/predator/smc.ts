@@ -13,8 +13,10 @@ export interface SMCSignal {
 
 export class SMCEngine {
   public static async analyze(pair: string): Promise<SMCSignal> {
-    const rawSMC = await MarketIntelligence.analyzeSMC(pair);
-    const bars = await MarketIntelligence.fetchCandles(pair, '240');
+    const [rawSMC, bars] = await Promise.all([
+      MarketIntelligence.analyzeSMC(pair),
+      MarketIntelligence.fetchCandles(pair, '240') // 4H chart — also used by analyzeSMC
+    ]);
     
     if (bars.length === 0) {
       return {

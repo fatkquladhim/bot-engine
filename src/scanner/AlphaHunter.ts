@@ -261,20 +261,27 @@ export class AlphaHunter {
     let rejectedDowntrend = 0;
     let rejectedSpoof = 0;
 
-    console.log(`\n🧠 [MARKET INTELLIGENCE] Menganalisa Trend, Orderbook, dan ATR untuk Top ${preValid.length} kandidat...`);
-    
-     // Process sequentially or in small batches to avoid rate limits
+console.log(`\n🧠 [MARKET INTELLIGENCE] Menganalisa Trend, Orderbook, dan ATR untuk Top ${preValid.length} kandidat (Sequential)...`);
+     
+     // Sequential processing with rate limit delays
      for (const c of preValid) {
-       // Delay 300ms to avoid burst block
-       await new Promise(r => setTimeout(r, 300));
+       // 2s delay between pairs to respect rate limits
+       await new Promise(r => setTimeout(r, 2000));
 
-        const [trend, ob, atr, vol5mBars, smcSignal] = await Promise.all([
-          MarketIntelligence.analyzeTrend(c.pair),
-          MarketIntelligence.analyzeOrderbook(c.pair),
-          MarketIntelligence.calculateATRTargets(c.pair, c.priceIdr),
-          MarketIntelligence.fetchCandles(c.pair, '5'),
-          SMCEngine.analyze(c.pair)
-        ]);
+       // Fetch trend (already sequential internally with 1.5s delays)
+       const trend = await MarketIntelligence.analyzeTrend(c.pair);
+       await new Promise(r => setTimeout(r, 1500));
+
+       const ob = await MarketIntelligence.analyzeOrderbook(c.pair);
+       await new Promise(r => setTimeout(r, 1500));
+
+       const atr = await MarketIntelligence.calculateATRTargets(c.pair, c.priceIdr);
+       await new Promise(r => setTimeout(r, 1500));
+
+       const smcSignal = await SMCEngine.analyze(c.pair);
+       await new Promise(r => setTimeout(r, 1500));
+
+       const vol5mBars = await MarketIntelligence.fetchCandles(c.pair, '5');
 
        const recentVolIdr = vol5mBars.slice(-3).reduce((sum, b) => sum + b.volume, 0);
        

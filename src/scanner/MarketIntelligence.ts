@@ -1,5 +1,6 @@
 import axios from 'axios';
 import { IndodaxPublicAPI } from '../core/IndodaxPublicAPI';
+import { indodaxLimiter } from '../utils/RateLimiter';
 
 // ============================================================
 // TYPES
@@ -59,20 +60,12 @@ export class MarketIntelligence {
       const tvSymbol = `${symbolClean}IDR`; // Indodax TV uses BTCIDR format
       const now = Math.floor(Date.now() / 1000);
 
-      const headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-      };
-
-      // Fetch 1H (last 48 bars), 4H (last 30 bars), Daily (last 30 bars)
-      const [h1Res, h4Res, dRes] = await Promise.allSettled([
-        this.fetchCandles(tvSymbol, '60',   now - 48 * 3600,       now, headers),
-        this.fetchCandles(tvSymbol, '240',  now - 30 * 4 * 3600,   now, headers),
-        this.fetchCandles(tvSymbol, 'D',    now - 30 * 86400,       now, headers),
-      ]);
-
-      const h1Bars    = h1Res.status === 'fulfilled'  ? h1Res.value  : [];
-      const h4Bars    = h4Res.status === 'fulfilled'  ? h4Res.value  : [];
-      const dailyBars = dRes.status  === 'fulfilled'  ? dRes.value   : [];
+      // Fetch 1H (last 48 bars), 4H (last 30 bars), Daily (last 30 bars) — sequential to avoid burst
+      const h1Bars    = await this.fetchCandles(tvSymbol, '60',   now - 48 * 3600,   now);
+      await new Promise(r => setTimeout(r, 1500));
+      const h4Bars    = await this.fetchCandles(tvSymbol, '240',  now - 30 * 4 * 3600, now);
+      await new Promise(r => setTimeout(r, 1500));
+      const dailyBars = await this.fetchCandles(tvSymbol, 'D',    now - 30 * 86400,  now);
 
       const trend1H    = this.detectTrend(h1Bars);
       const trend4H    = this.detectTrend(h4Bars);
@@ -143,28 +136,33 @@ export class MarketIntelligence {
     }
   }
 
+  // Simple in-memory cache for TradingView history
+  private static tvCache: Map<string, { data: OHLCBar[]; expiry: number }> = new Map();
+
   public static async fetchCandles(symbol: string, resolution: string, from?: number, to?: number, headers?: any): Promise<OHLCBar[]> {
     const symbolClean = symbol.replace('_idr', '').toUpperCase();
     const tvSymbol = symbolClean.includes('IDR') ? symbolClean : `${symbolClean}IDR`;
     
     const now = Math.floor(Date.now() / 1000);
-    const effectiveFrom = from || (now - 3600 * 24); // Default 24h back
+    const effectiveFrom = from || (now - 3600 * 24);
     const effectiveTo = to || now;
-    const effectiveHeaders = headers || {
-      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-    };
+
+    // Cache key per symbol+resolution+time window (5 min TTL)
+    const cacheKey = `${tvSymbol}_${resolution}_${Math.floor(effectiveFrom / 300)}_${Math.floor(effectiveTo / 300)}`;
+    const cached = this.tvCache.get(cacheKey);
+    if (cached && Date.now() < cached.expiry) return cached.data;
 
     const url = 'https://indodax.com/tradingview/history';
     try {
-      const res = await axios.get(url, {
+      const res = await indodaxLimiter.schedule(() => axios.get(url, {
         params: { symbol: tvSymbol, resolution, from: effectiveFrom, to: effectiveTo },
         headers: {
-          ...effectiveHeaders,
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
           'Accept': 'application/json, text/plain, */*',
           'Referer': 'https://indodax.com/'
         },
-        timeout: 5000
-      });
+        timeout: 8000
+      }));
 
       const d = res.data;
       if (!d || d.s !== 'ok' || !d.t) return [];
@@ -177,8 +175,11 @@ export class MarketIntelligence {
         close: parseFloat(d.c[i]),
         volume: parseFloat(d.v[i] || "0"),
       }));
+
+      // Cache for 5 min
+      this.tvCache.set(cacheKey, { data: bars, expiry: Date.now() + 300_000 });
       return bars;
-    } catch (e) {
+    } catch {
       return [];
     }
   }
@@ -400,12 +401,8 @@ export class MarketIntelligence {
       const symbolClean = pair.replace('_idr', '').toUpperCase();
       const tvSymbol = `${symbolClean}IDR`;
       const now      = Math.floor(Date.now() / 1000);
-      const headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-      };
-
-      // Fetch 1H bars (last 14) to compute ATR(14)
-      const bars = await this.fetchCandles(tvSymbol, '60', now - 20 * 3600, now, headers);
+      // Fetch 1H bars (last 14) to compute ATR(14) — cached
+      const bars = await this.fetchCandles(tvSymbol, '60', now - 20 * 3600, now);
 
       if (bars.length < 5) {
         // Fallback: ATR = 3% of price
