@@ -12,7 +12,7 @@ export class SocialHypeRadar {
     switch (narrative) {
       case NarrativeType.MEME_COINS: return baseHype + 20; // Memes always have social hype
       case NarrativeType.AI_AGENTS: return baseHype + 15;
-      case NarrativeType.RWA: return baseHype + 5;
+      case NarrativeType.RWA_DEFI: return baseHype + 5;
       default: return baseHype;
     }
   }

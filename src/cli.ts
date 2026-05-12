@@ -390,6 +390,12 @@ async function runCLI() {
         
         // 1. ADOPT UNTRACKED COINS (Manual Purchases)
         console.log(`\n🔍 [ADOPTION] Memeriksa koin manual di portofolio...`);
+        // Pastikan default user ada di DB untuk foreign key
+        await (prisma as any).user.upsert({
+          where: { id: 'default_system_user' },
+          update: {},
+          create: { id: 'default_system_user', email: 'bot@system.local', displayName: 'System Bot' }
+        });
         const firstUser = await (prisma as any).user.findFirst();
         const validUserId = firstUser ? firstUser.id : 'default_system_user';
 
