@@ -25,11 +25,21 @@ export class RiskDomain {
     }
   }
 
+  private static lastResetDate: string = '';
+
   /**
    * Monitor for global circuit break conditions.
    * Dipanggil setiap siklus autopilot dengan equity terkini.
    */
   public static monitor(currentEquity: number, startingEquity?: number): boolean {
+    const today = new Date().toDateString();
+    if (this.lastResetDate !== today) {
+      this.resetCircuit();
+      this.startingEquity = 0; // Force re-sync
+      this.lastResetDate = today;
+      console.log(`🔄 [RISK DOMAIN] Reset harian otomatis untuk ${today}`);
+    }
+
     const base = startingEquity || this.startingEquity || currentEquity;
     if (base <= 0) return false;
 

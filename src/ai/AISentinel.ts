@@ -51,17 +51,16 @@ export class AISentinel {
     this.sumopodKey = process.env.SUMOPOD_API_KEY || "";
     this.sumopodBaseUrl = process.env.SUMOPOD_BASE_URL || "https://ai.sumopod.com/v1";
 
-    const freeEnv = process.env.SUMOPOD_FREE_MODELS || "qwen/qwen3-30b-a3b-instruct-2507,nvidia/nemotron-3-nano-30b,openai/gpt-oss-20b";
-    this.freeModels = freeEnv.split(',').map(m => m.trim());
-
-    const fallbackEnv = process.env.SUMOPOD_FALLBACK_MODELS || "MiniMax-M2.7-highspeed,gemini/gemini-2.0-flash-lite,deepseek-v4-flash";
-    this.fallbackModels = fallbackEnv.split(',').map(m => m.trim());
+    // 2026-05-12 Update: Optimized Trio for Performance & Cost
+    this.freeModels = ["gemini/gemini-2.0-flash-lite", "qwen/qwen3-30b-a3b-instruct-2507"];
+    this.fallbackModels = ["glm-5-turbo", "deepseek-v4-flash", "MiniMax-M2.7-highspeed"];
 
     if (this.sumopodKey) {
       this.isEnabled = true;
-      console.log(`🚀 [ALPHA OMEGA] Sumopod Engine Aktif`);
-      console.log(`   - Tier 1 (Scanner): ${this.freeModels[0]}`);
-      console.log(`   - Tier 2 (Consensus): ${this.fallbackModels[0]}`);
+      console.log(`🚀 [ALPHA OMEGA] AI Council Engine Aktif (Collaborative)`);
+      console.log(`   - Tier 1 (Hunter): gemini/gemini-2.0-flash-lite`);
+      console.log(`   - Tier 2 (Critic): deepseek-v4-flash`);
+      console.log(`   - Tier 3 (Judge) : glm-5-turbo`);
     } else {
       console.error("❌ [CRITICAL] SUMOPOD_API_KEY tidak ditemukan!");
     }
@@ -122,20 +121,24 @@ export class AISentinel {
     const marketData = await this.buildMarketDataForPair(pair);
     console.log(`   🤝 [CONSENSUS] Fetching signals for ${pair.toUpperCase()}...`);
 
-    const modelA = this.freeModels[0];
-    const modelB = this.freeModels[1];
-    const modelC = this.freeModels[2];
+    // Tier 1: THE HUNTER (Gemini-Lite - Scanner)
+    const modelHunter = "gemini/gemini-2.0-flash-lite";
+    const rawA = await withTimeout(this.callSumopodAI(marketData, isHeld, pair, modelHunter, 'hunter'), 60000).catch(() => "");
+    const resA = this.parseAI(rawA as string, modelHunter);
 
-    const rawA = await withTimeout(this.callSumopodAI(marketData, isHeld, pair, modelA, 'hunter'), 60000).catch(() => "");
-    const resA = this.parseAI(rawA as string, modelA);
-
+    // Tier 2: THE CRITIC (DeepSeek-V4 - Risk Analyst)
+    // Evaluasi Hunter Thesis
     const auditData = `${marketData}\n\n[HUNTER THESIS]: ${rawA}`;
-    const rawB = rawA ? await withTimeout(this.callSumopodAI(auditData, isHeld, pair, modelB, 'critic'), 60000).catch(() => "") : "";
-    const resB = this.parseAI(rawB as string, modelB);
+    const modelCritic = "deepseek-v4-flash";
+    const rawB = rawA ? await withTimeout(this.callSumopodAI(auditData, isHeld, pair, modelCritic, 'critic'), 60000).catch(() => "") : "";
+    const resB = this.parseAI(rawB as string, modelCritic);
 
+    // Tier 3: THE JUDGE (GLM-5-Turbo - Final Decision)
+    // Evaluasi Hunter vs Critic
     const judgeData = `${marketData}\n\n[HUNTER]: ${rawA}\n\n[CRITIC]: ${rawB}`;
-    const rawC = (rawA || rawB) ? await withTimeout(this.callSumopodAI(judgeData, isHeld, pair, modelC, 'judge'), 60000).catch(() => "") : "";
-    const resC = this.parseAI(rawC as string, modelC);
+    const modelJudge = "glm-5-turbo";
+    const rawC = (rawA || rawB) ? await withTimeout(this.callSumopodAI(judgeData, isHeld, pair, modelJudge, 'judge'), 60000).catch(() => "") : "";
+    const resC = this.parseAI(rawC as string, modelJudge);
 
     const aiSignals = [resA, resB, resC].filter(Boolean) as AIResult[];
 
@@ -277,9 +280,9 @@ Absorption: ${ob.isAbsorbing ? 'YES - DANGER' : 'No'}`.trim();
 
   private buildPrompt(data: string, isHeld: boolean, pair: string, role: 'hunter' | 'critic' | 'judge' = 'hunter'): string {
     const roles: Record<string, string> = {
-      hunter: `Kamu THE HUNTER — cari peluang entry terbaik. Fokus: trend, momentum. Beri skor tinggi jika setup kuat.`,
-      critic: `Kamu THE CRITIC — cari alasan TIDAK masuk. Fokus: risiko, spread, manipulasi. Beri skor rendah jika ada red flag.`,
-      judge:  `Kamu THE JUDGE — keputusan final objektif. BUY hanya jika RR ≥ 1.5 dan tidak ada red flag besar.`,
+      hunter: `Kamu adalah THE HUNTER. Tugasmu mencari peluang entry agresif berdasarkan data trend dan volume. Proposisikan sebuah Thesis Entry jika ada setup menarik.`,
+      critic: `Kamu adalah THE CRITIC. Tugasmu mengevaluasi [HUNTER THESIS] secara skeptis. Cari alasan kenapa kita TIDAK boleh masuk (red flags, spoofing, bad spread). Jangan takut memberikan skor rendah jika Hunter terlalu FOMO.`,
+      judge:  `Kamu adalah THE JUDGE (Keputusan Final). Tinjau argumen dari HUNTER dan CRITIC. Ambil keputusan objektif berdasarkan Risk-to-Reward (RR) dan probabilitas SMC. Kamu adalah filter terakhir sebelum uang nyata dieksekusi.`,
     };
     return `${roles[role]}
 

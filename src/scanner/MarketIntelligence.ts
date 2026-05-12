@@ -130,8 +130,8 @@ export class MarketIntelligence {
 
       return { trend1H, trend4H, trendDaily, alignment, rsiRegime, trendScore };
     } catch {
-      // API failure — return neutral
-      return { trend1H: 'SIDEWAYS', trend4H: 'SIDEWAYS', trendDaily: 'SIDEWAYS', alignment: 'MIXED', rsiRegime: 'NEUTRAL', trendScore: 0 };
+      // API failure — return FAILED state to prevent false-positives
+      return { trend1H: 'SIDEWAYS', trend4H: 'SIDEWAYS', trendDaily: 'SIDEWAYS', alignment: 'MIXED', rsiRegime: 'NEUTRAL', trendScore: -100 }; // -100 will trigger rejection
     }
   }
 

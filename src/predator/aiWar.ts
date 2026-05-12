@@ -17,12 +17,12 @@ export class AIWarConsensus {
    * Mengintegrasikan sinyal dari beberapa agen AI dengan prioritas narrative.
    * Logic: Narrative-First + Momentum Execution
    */
-  public static calculateConsensus(results: AIResult[]): { 
+  public static async calculateConsensus(results: AIResult[]): Promise<{ 
     finalScore: number; 
     action: 'BUY' | 'WATCHLIST' | 'WAIT' | 'AVOID'; 
     isManipulated: boolean;
     summary: string;
-  } {
+  }> {
     if (results.length === 0) {
       return { finalScore: 0, action: 'AVOID', isManipulated: false, summary: 'No signals' };
     }
@@ -38,7 +38,7 @@ export class AIWarConsensus {
     // Get current regime for aggressive adjustments
     let regime = MarketRegime.WAR;
     try {
-      const regimeResult = MacroRegimeEngine.getCurrentRegime();
+      const regimeResult = await MacroRegimeEngine.getCurrentRegime();
       if (regimeResult && 'regime' in regimeResult) {
         regime = (regimeResult as any).regime || MarketRegime.WAR;
       }
@@ -165,18 +165,18 @@ export class AIWarConsensus {
    * Calculate consensus with narrative override
    * Enhanced version that considers narrative execution override
    */
-  public static calculateEnhancedConsensus(
+  public static async calculateEnhancedConsensus(
     results: AIResult[],
     narrativeInput: ConsensusInput
-  ): {
+  ): Promise<{
     finalScore: number;
     action: 'BUY' | 'WATCHLIST' | 'WAIT' | 'AVOID';
     isManipulated: boolean;
     summary: string;
     override: { isOverride: boolean; confidenceBoost: number; reason: string };
-  } {
+  }> {
     // Base consensus
-    const baseConsensus = this.calculateConsensus(results);
+    const baseConsensus = await this.calculateConsensus(results);
     
     // Check narrative override
     const override = this.checkNarrativeExecutionOverride(narrativeInput);

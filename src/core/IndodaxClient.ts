@@ -142,8 +142,12 @@ export async function getCachedEquity(client: IndodaxClient): Promise<{ total: n
 
   for (const [coin, amt] of Object.entries(balances)) {
     if (coin === 'idr' || coin === 'timestamp' || parseFloat(amt as string) <= 0) continue;
-    const pair = `${coin.toLowerCase()}_idr`;
-    const ticker = allTickers[`${coin.toLowerCase()}idr`] || allTickers[pair];
+    
+    // FIX: Indodax Ticker All keys are inconsistent (btcidr vs btc_idr)
+    const pairUnderscore = `${coin.toLowerCase()}_idr`;
+    const pairNoUnderscore = `${coin.toLowerCase()}idr`;
+    const ticker = allTickers[pairNoUnderscore] || allTickers[pairUnderscore];
+    
     const price = ticker ? parseFloat(ticker.last) : 0;
     const value = price * parseFloat(amt as string);
     if (value > 1000) {

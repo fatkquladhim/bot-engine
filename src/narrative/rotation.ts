@@ -23,12 +23,12 @@ export class RotationEngine {
 
   public static getTargetSectors(phase: MarketPhase): string[] {
     switch (phase) {
-      case MarketPhase.BTC_PUMP: return ['L1_L2'];
-      case MarketPhase.ETH_REBOUND: return ['L1_L2', 'DEFI'];
-      case MarketPhase.ALT_LARGE_CAP: return ['L1_L2', 'RWA', 'AI_AGENTS'];
+      case MarketPhase.BTC_PUMP: return ['L1_L2_ECOSYSTEM'];
+      case MarketPhase.ETH_REBOUND: return ['L1_L2_ECOSYSTEM', 'DEFI'];
+      case MarketPhase.ALT_LARGE_CAP: return ['L1_L2_ECOSYSTEM', 'RWA_DEFI', 'AI_AGENTS'];
       case MarketPhase.MEME_MANIA: return ['MEME_COINS'];
       case MarketPhase.FULL_ALTSEASON: return ['MEME_COINS', 'GAMING', 'DEPIN'];
-      default: return ['L1_L2'];
+      default: return ['L1_L2_ECOSYSTEM'];
     }
   }
 }

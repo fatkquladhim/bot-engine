@@ -11,6 +11,7 @@ import { NarrativeEngine } from '../narrative/engine';
 import { WhaleDetector } from '../modules/market/WhaleDetector';
 import { MarketIntelligence } from '../scanner/MarketIntelligence';
 import { ProbabilityEngine } from '../modules/ai/ProbabilityEngine';
+import { NarrativeMapper, NarrativeType } from '../narrative/mapper';
 
 export interface TradingDecision {
   shouldBuy: boolean;
@@ -56,7 +57,7 @@ export class PredatorStrategy {
     const { regime, metrics } = await MacroRegimeEngine.getCurrentRegime();
     
     // 3. AI Consensus with Narrative Override
-    let consensus = AIWarConsensus.calculateConsensus(aiResults);
+    let consensus = await AIWarConsensus.calculateConsensus(aiResults);
     let narrativeOverride = { isOverride: false, confidenceBoost: 0, reason: '' };
     
     if (narrativeScores) {
@@ -127,18 +128,17 @@ export class PredatorStrategy {
     }
 
     // 7. CONSENSUS PRIORITY ORDER - Narrative First
-    // smcScore max = 80 (20+15+25+10+10), bukan 100
     const SMC_MAX = 80;
     let confidenceScore = 0;
     
-    // PRIORITY 1: Narrative Strength (30% weight - INCREASED)
+    // PRIORITY 1: Narrative Strength (30% weight)
     confidenceScore += (narrativeScore / 100) * 30;
     
     // PRIORITY 2: Hype Level (15% weight)
     if (narrativeScores?.hypeLevel) {
       confidenceScore += (narrativeScores.hypeLevel / 100) * 15;
     } else {
-      confidenceScore += (narrativeScore / 100) * 10; // Fallback
+      confidenceScore += (narrativeScore / 100) * 10;
     }
     
     // PRIORITY 3: Volume Acceleration (15% weight)
@@ -157,58 +157,42 @@ export class PredatorStrategy {
     // PRIORITY 6: Momentum (5% weight)
     confidenceScore += (narrativeScores?.momentumScore || 50) / 100 * 5;
     
-    // PRIORITY 7: Technical Confirmation (5% weight - REDUCED)
+    // PRIORITY 7: Technical Confirmation (5% weight)
     confidenceScore += (sniper.confidence / 100) * 5;
     
     // Additional factors
-    confidenceScore += (whale.isWhaleActive ? 10 : 0);      // Whale: 10%
-    confidenceScore += (alphaHunterScore / 100) * 10;       // AlphaHunter: 10%
-    confidenceScore += (ob.obScore / 20) * 5;              // OB Score: 5%
+    confidenceScore += (whale.isWhaleActive ? 10 : 0);
+    confidenceScore += (alphaHunterScore / 100) * 10;
+    confidenceScore += (ob.obScore / 20) * 5;
     
-    // Meme Boost for MEME_MANIA
     if (marketPhase === 'MEME_MANIA') {
-      confidenceScore += Math.min(memeBoost, 15); // Up to +15 for memes in mania
+      confidenceScore += Math.min(memeBoost, 15);
     } else {
-      confidenceScore += Math.min(memeBoost, 8); // Normal +8
+      confidenceScore += Math.min(memeBoost, 8);
     }
     
-    // BONUS: AlphaHunter kandidat
     if (alphaHunterScore > 60) confidenceScore += 8;
-    
-    // Apply narrative override boost
     if (narrativeOverride.isOverride) {
       confidenceScore = Math.min(100, confidenceScore + narrativeOverride.confidenceBoost);
     }
 
     let finalScore = Math.min(100, confidenceScore);
     
-    // === REGIME BIAS: Adjust berdasarkan market phase ===
-    
-    // MEME_MANIA: Ultra aggressive
     if (marketPhase === 'MEME_MANIA') {
-      finalScore = Math.min(100, finalScore + 10); // +10 boost for meme mania
-    }
-    // ALTSEASON: Aggressive
-    else if (marketPhase === 'ALTSEASON') {
+      finalScore = Math.min(100, finalScore + 10);
+    } else if (marketPhase === 'ALTSEASON') {
       finalScore = Math.min(100, finalScore + 8);
-    }
-    // PREDATOR BULL: Moderate aggressive
-    else if (marketPhase === 'PREDATOR_BULL') {
+    } else if (marketPhase === 'PREDATOR_BULL') {
       finalScore = Math.min(100, finalScore + 5);
     }
-    // DEFENSE: Keep baseline (no extra boost)
     
-    // NO 4H CONFIRMATION POLICY
-    // Kurangi penalti untuk missing HTF setup
     if (smc.bos === 'NONE' && smc.choch === 'NONE') {
-      // Missing confirmation = tidak langsung reject
-      // Tapi tetap kurangi score sedikit di DEFENSE
       if (marketPhase === 'DEFENSE') {
         finalScore = Math.max(0, finalScore - 5);
       }
     }
 
-    // 8. TIERED EXECUTION ENGINE - Aggressive Thresholds
+    // 8. TIERED EXECUTION ENGINE
     const entryPrice = sniper.entryPrice || aiResults[0]?.precise_entry || 0;
     let resolvedEntry = entryPrice;
     if (!resolvedEntry || resolvedEntry <= 0) {
@@ -218,39 +202,51 @@ export class PredatorStrategy {
         resolvedEntry = parseFloat(ticker.ticker.last);
       } catch { resolvedEntry = 0; }
     }
+    
     const plan = ExitManager2.calculateInitialPlan(resolvedEntry);
 
-    // Dynamic thresholds berdasarkan market phase
-    let marketBuyThreshold = 60;   // Lowered from 65
-    let limitEntryThreshold = 45;  // Lowered from 55
-    let scoutEntryThreshold = 35;   // Lowered from 45
+    // 7.5 Sector-Specific Risk Profiling (The "May Meta" 2026)
+    const sector = NarrativeMapper.getNarrativeForPair(pair);
+    const riskProfile = NarrativeMapper.getRiskProfile(sector);
+    
+    if (plan && resolvedEntry > 0) {
+      const currentSLPct = (Math.abs(resolvedEntry - plan.sl) / resolvedEntry);
+      const newSLPct = currentSLPct * riskProfile.slMult;
+      plan.sl = resolvedEntry * (1 - newSLPct);
+      
+      plan.tp1 = resolvedEntry + (plan.tp1 - resolvedEntry) * riskProfile.tpMult;
+      plan.tp2 = resolvedEntry + (plan.tp2 - resolvedEntry) * riskProfile.tpMult;
+      plan.tp3 = resolvedEntry + (plan.tp3 - resolvedEntry) * riskProfile.tpMult;
+    }
 
-    // MEME_MANIA: Even more aggressive thresholds
+    let marketBuyThreshold = 60;
+    let limitEntryThreshold = 45;
+    let scoutEntryThreshold = 35;
+
     if (marketPhase === 'MEME_MANIA') {
       marketBuyThreshold = 50;
       limitEntryThreshold = 40;
       scoutEntryThreshold = 30;
-    }
-    // ALTSEASON: Aggressive thresholds
-    else if (marketPhase === 'ALTSEASON') {
+    } else if (marketPhase === 'ALTSEASON') {
       marketBuyThreshold = 55;
       limitEntryThreshold = 40;
       scoutEntryThreshold = 30;
-    }
-    // PREDATOR BULL: Moderate aggressive
-    else if (marketPhase === 'PREDATOR_BULL') {
+    } else if (marketPhase === 'PREDATOR_BULL') {
       marketBuyThreshold = 58;
       limitEntryThreshold = 43;
       scoutEntryThreshold = 33;
     }
 
+    // Adjust thresholds based on sector confidence requirements
+    marketBuyThreshold = Math.max(marketBuyThreshold, riskProfile.confidenceReq - 10);
+    limitEntryThreshold = Math.max(limitEntryThreshold, riskProfile.confidenceReq - 20);
+
     // === EXECUTION DECISION ===
-    
     if (finalScore >= marketBuyThreshold) {
       return {
         shouldBuy: true,
         action: 'MARKET_BUY',
-        reason: `🦅 ELITE (100%): ${narrativeOverride.isOverride ? narrativeOverride.reason : marketPhase} | ${smc.summary}`,
+        reason: `🦅 ELITE (100%): ${narrativeOverride.isOverride ? narrativeOverride.reason : marketPhase} | Sector: ${sector} | ${smc.summary}`,
         score: finalScore,
         targets: plan,
         sizeMultiplier: 1.0,
@@ -263,7 +259,7 @@ export class PredatorStrategy {
       return {
         shouldBuy: true,
         action: 'LIMIT_ENTRY',
-        reason: `🎯 PRO (50%): ${marketPhase} | ${smc.summary}`,
+        reason: `🎯 PRO (50%): ${marketPhase} | Sector: ${sector} | ${smc.summary}`,
         score: finalScore,
         targets: plan,
         sizeMultiplier: 0.5,
@@ -272,14 +268,13 @@ export class PredatorStrategy {
       };
     }
 
-    // SCOUT ENTRY: khusus accumulation phase dengan narrative kuat
     if (finalScore >= scoutEntryThreshold && 
         (marketPhase === 'MEME_MANIA' || marketPhase === 'ALTSEASON' || narrativeScore >= 70) && 
         smc.premiumDiscount === 'DISCOUNT') {
       return {
         shouldBuy: true,
         action: 'LIMIT_ENTRY',
-        reason: `🔭 SCOUT (25%): Accumulation + ${marketPhase} | ${smc.summary}`,
+        reason: `🔭 SCOUT (25%): ${sector} Accumulation | ${smc.summary}`,
         score: finalScore,
         targets: plan,
         sizeMultiplier: 0.25,
@@ -288,13 +283,11 @@ export class PredatorStrategy {
       };
     }
 
-    // === REDUCED WATCHLIST CONTROL ===
-    // WATCHLIST hanya jika benar-benar lemah
     if (finalScore >= 25) {
       return { 
         shouldBuy: false, 
         action: 'SNIPER_WATCHLIST',
-        reason: `👀 WATCH: ${marketPhase} | Score ${finalScore.toFixed(0)} | ${smc.summary}`, 
+        reason: `👀 WATCH: ${sector} | Score ${finalScore.toFixed(0)}`, 
         score: finalScore,
         consensusOverride: narrativeOverride,
         marketPhase
@@ -304,7 +297,7 @@ export class PredatorStrategy {
     return { 
       shouldBuy: false, 
       action: 'SKIP',
-      reason: `🚫 SKIP: ${marketPhase} | Score ${finalScore.toFixed(0)} < 25`, 
+      reason: `🚫 SKIP: ${sector} | Score ${finalScore.toFixed(0)} < 25`, 
       score: finalScore,
       consensusOverride: narrativeOverride,
       marketPhase

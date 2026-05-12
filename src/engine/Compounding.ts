@@ -93,6 +93,14 @@ export class CompoundingEngine {
     // Nominal yang direkomendasikan untuk dibeli
     let recommendedSizeIdr = basePositionSizeIdr * confidenceMultiplier;
 
+    // HARD CAP: Jangan pernah alokasikan lebih dari 30% wallet ke satu koin
+    const MAX_SINGLE_TRADE_PCT = 0.30;
+    const maxHardCapIdr = activeWalletIdr * MAX_SINGLE_TRADE_PCT;
+    if (recommendedSizeIdr > maxHardCapIdr) {
+      console.log(`🛡️ [COMPOUNDING] Position size dikurangi ke cap 30% (Rp ${Math.round(maxHardCapIdr).toLocaleString()})`);
+      recommendedSizeIdr = maxHardCapIdr;
+    }
+
     // FLOOR LOGIC: Jangan entry di bawah 50rb agar tidak kena debu (Dust) dan ditolak Indodax
     const MIN_ENTRY = 50000;
     if (recommendedSizeIdr > 0 && recommendedSizeIdr < MIN_ENTRY) {

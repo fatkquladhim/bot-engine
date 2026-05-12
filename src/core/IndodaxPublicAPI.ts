@@ -73,13 +73,19 @@ export class IndodaxPublicAPI {
   public static async getAllTickers(): Promise<Record<string, any>> {
     const cached = cache.get('all_tickers');
     if (cached && Date.now() < cached.expiry) return cached.data as Record<string, any>;
-    const data = await indodaxGet(
+    const data: any = await indodaxGet(
       'https://indodax.com/api/ticker_all',
       'all_tickers',
       cache,
       60_000
     );
-    return (data as any).tickers || {};
+    
+    if (data && data.tickers && Object.keys(data.tickers).length > 0) {
+      return data.tickers;
+    }
+
+    // Fallback: If API fails, try to return previous cache even if expired
+    return (cached?.data as any)?.tickers || (data as any)?.tickers || {};
   }
 
   public static clearCache() {
