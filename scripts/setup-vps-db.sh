@@ -36,7 +36,13 @@ npx prisma db push --accept-data-loss 2>&1 || {
   npx prisma db push --accept-data-loss
 }
 
-# 5. Verify
+# 5. Install Chromium untuk WhatsApp
+echo "🌐 Install Chromium untuk WhatsApp bot..."
+apt install -y chromium-browser 2>/dev/null || apt install -y chromium 2>/dev/null || {
+  echo "⚠️ Chromium tidak di repo, puppeteer akan download sendiri nanti"
+}
+
+# 6. Verify
 echo ""
 echo "✅ Selesei! Cek hasilnya:"
 echo "   sudo -u postgres psql -d botdb -c '\dt'"
