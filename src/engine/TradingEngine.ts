@@ -67,8 +67,8 @@ export class TradingEngine {
     this.client = new IndodaxClient(config.api);
     this.riskManager = new RiskManager(config.risk);
     this.isDryRun = config.isDryRun ?? true;
-    this.maxExposurePercent = config.maxPortfolioExposurePercent ?? 90; // FULL WAR MODE: 90%
-    this.maxPositions = config.maxOpenPositions ?? 5; // 5 koin sekaligus
+    this.maxExposurePercent = config.maxPortfolioExposurePercent ?? 30; // Survival: 30%
+    this.maxPositions = config.maxOpenPositions ?? 3; // max 3 koin
 
     this.loadState();
 

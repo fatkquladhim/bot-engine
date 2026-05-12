@@ -102,10 +102,10 @@ async function runCLI() {
 
   const engine = new TradingEngine({
     api: { apiKey, secretKey },
-    risk: { maxPositionSizePercent: 100, maxDrawdownDailyPercent: 10 }, // Naikkan daily loss limit ke 10%
+    risk: { maxPositionSizePercent: 10, maxDrawdownDailyPercent: 5 },
     isDryRun: isSafeMode,
-    maxPortfolioExposurePercent: 75,
-    maxOpenPositions: 7
+    maxPortfolioExposurePercent: 30,
+    maxOpenPositions: 3
   });
   
   // Inject parameter tambahan ke state/risk engine jika diperlukan
@@ -177,28 +177,53 @@ async function runCLI() {
     const growthStrategy = new GrowthStrategy();
     const hunter = new AlphaHunter();
 
-    // State tracking untuk anti-overtrade
+    // State tracking untuk anti-overtrade (persist ke DB)
     let dailyTradeCount = 0;
-    const lastTradeReset = new Date().toDateString();
+    let lastTradeReset = new Date().toDateString();
+    let lastBuyTimestamp = 0;
+    const MIN_BUY_INTERVAL_MS = 4 * 60 * 60 * 1000; // 4 jam cooldown antar buy
+
+    // Load last trade timestamp dari DB agar persist meski restart
+    try {
+      const lastTrade = await (prisma as any).analysis.findFirst({
+        where: { status: { in: ['PROFIT', 'LOSS', 'TRADING'] } },
+        orderBy: { createdAt: 'desc' }
+      });
+      if (lastTrade) {
+        lastBuyTimestamp = lastTrade.createdAt.getTime();
+        console.log(`⏳ [PERSIST] Trade terakhir: ${new Date(lastBuyTimestamp).toLocaleString()}`);
+      }
+    } catch { /* ignore */ }
 
     console.log('\n🔍 [ALPHA HUNTER] Scan pasar awal...');
     const MEME_PAIRS = new Set(['pepe_idr','doge_idr','shib_idr','fartcoin_idr','pippin_idr',
       'zerebro_idr','moodeng_idr','pengu_idr','wif_idr','bonk_idr','floki_idr','brett_idr',
       'jellyjelly_idr','dogs_idr','neiro_idr','turbo_idr','popcat_idr']);
 
-    const balancePairs = (pairs: string[], maxMeme = 3): string[] => {
-      const meme = pairs.filter(p => MEME_PAIRS.has(p)).slice(0, maxMeme);
-      const nonMeme = pairs.filter(p => !MEME_PAIRS.has(p));
-      // Gabung: non-meme dulu, lalu meme (max 3)
-      return [...nonMeme, ...meme].slice(0, 5); // Max 5 pairs untuk AI Sentinel
+    // Cari sektor yang lagi panas dari NarrativeEngine
+    const { NarrativeMapper } = require('./narrative/mapper');
+    const narrativeReport = await NarrativeEngine.generateReport();
+    const hotSectors = narrativeReport.hotNow.filter(h => h.score >= 60).map(h => h.type);
+    console.log(`🔥 [NARRATIVE] Sektor panas: ${hotSectors.join(', ')}`);
+
+    const filterByHotSectors = (pairs: string[]): string[] => {
+      if (hotSectors.length === 0) return pairs;
+      const hotPairs = pairs.filter(p => hotSectors.includes(NarrativeMapper.getNarrativeForPair(p)));
+      if (hotPairs.length === 0) return pairs; // fallback ke semua jika tak ada yg cocok
+      return hotPairs;
     };
 
     let huntResults = await hunter.hunt(10);
     let dynamicPairs = huntResults.length > 0
-      ? balancePairs(huntResults.map(r => r.pair))
+      ? filterByHotSectors(huntResults.map(r => r.pair)).slice(0, 5)
       : ['btc_idr', 'eth_idr', 'sol_idr', 'ada_idr', 'xrp_idr'];
 
-    console.log(`🎯 Target pairs hari ini: ${dynamicPairs.join(', ').toUpperCase()}`);
+    // Jika hasil filter kosong, fallback ke top 5
+    if (dynamicPairs.length === 0) {
+      dynamicPairs = huntResults.slice(0, 5).map(r => r.pair);
+    }
+
+    console.log(`🎯 Target pairs (hot sector) : ${dynamicPairs.join(', ').toUpperCase()}`);
 
     const sentinel = new AISentinel(engine, dynamicPairs);
     // Inject AlphaHunter scores ke sentinel untuk dipakai di PredatorStrategy
@@ -208,8 +233,12 @@ async function runCLI() {
     setInterval(async () => {
       console.log('\n🔄 [ALPHA HUNTER] Re-scan pasar untuk update target...');
       huntResults = await hunter.hunt(10);
+      // Re-fetch hot sectors
+      const updatedNarrative = await NarrativeEngine.generateReport();
+      const updatedHotSectors = updatedNarrative.hotNow.filter(h => h.score >= 60).map(h => h.type);
       if (huntResults.length > 0) {
-        dynamicPairs = balancePairs(huntResults.map(r => r.pair));
+        dynamicPairs = filterByHotSectors(huntResults.map(r => r.pair)).slice(0, 5);
+        if (dynamicPairs.length === 0) dynamicPairs = huntResults.slice(0, 5).map(r => r.pair);
         console.log(`🎯 Target pairs diperbarui: ${dynamicPairs.join(', ')}`);
         (sentinel as any).targetPairs = dynamicPairs;
         for (const r of huntResults) sentinel.alphaScores[r.pair] = r.totalScore;
@@ -277,11 +306,11 @@ async function runCLI() {
 
     const runAutopilotCycle = async () => {
       try {
-        // --- MAY 1M TARGET INITIALIZATION (FORCED SYNC) ---
+        // Sync settings (respect CLI args, jangan paksa WAR terus)
         await (prisma as any).botSettings.upsert({
           where: { id: "global" },
-          update: { riskPerTrade: 5, maxOpenPositions: 7, strategyMode: 'WAR' },
-          create: { id: "global", riskPerTrade: 5, maxOpenPositions: 7, strategyMode: 'WAR', isBotEnabled: true }
+          update: { riskPerTrade: 1, maxOpenPositions: 3, strategyMode: mode },
+          create: { id: "global", riskPerTrade: 1, maxOpenPositions: 3, strategyMode: mode, isBotEnabled: true }
         });
 
         // --- SYNC SETTINGS FROM DASHBOARD ---
@@ -309,14 +338,16 @@ async function runCLI() {
         const totalCapital = await engine.calculateTotalEquity();
         await PerformanceTracker.recordDaily(totalCapital, engine.state.totalPnL, (engine.state.totalPnL / totalCapital) * 100);
 
-        // Reset daily trade count jika hari baru
-        if (new Date().toDateString() !== lastTradeReset) {
-          dailyTradeCount = 0;
-        }
+        // Hitung trade hari ini dari DB (persist meski restart)
+        const todayStart = new Date();
+        todayStart.setHours(0, 0, 0, 0);
+        const todayTrades = await (prisma as any).analysis.count({
+          where: { createdAt: { gte: todayStart }, status: { in: ['PROFIT', 'LOSS', 'TRADING'] } }
+        });
+        dailyTradeCount = todayTrades;
 
-        // Anti-overtrade check
         if (dailyTradeCount >= maxTrades) {
-          console.log(`\n⛔ [ANTI-OVERTRADE] Batas ${maxTrades} trade/hari tercapai. Bot istirahat.`);
+          console.log(`\n⛔ [ANTI-OVERTRADE] ${dailyTradeCount}/${maxTrades} trade hari ini. Bot istirahat.`);
           return;
         }
 
@@ -650,13 +681,38 @@ async function runCLI() {
           console.log(`└${sep}┘`);
           await DBBridge.logActivity('TRADE', `✅ EXECUTING BUY: ${ai.pair.toUpperCase()} @ Rp ${safeEntry.toLocaleString()}`);
 
+          // ===== ATOMIC BUY GUARD =====
+          if (Date.now() - lastBuyTimestamp < MIN_BUY_INTERVAL_MS) {
+            console.log(`⏳ [COOLDOWN] Menunggu ${Math.ceil((MIN_BUY_INTERVAL_MS - (Date.now() - lastBuyTimestamp)) / 1000)}s sebelum entry berikutnya...`);
+            continue;
+          }
+
+          // Exposure reservation check
+          const maxAllowedExposure = totalCapital * (engine['maxExposurePercent'] / 100);
+          if (engine.state.totalExposureIdr + sizeIdr > maxAllowedExposure) {
+            console.log(`│  STATUS : REJECTED — Exposure limit reservation failed │`);
+            console.log(`└${sep}┘`);
+            continue;
+          }
+
           // EXECUTE ORDER
-          await engine.executeBuy(ai.pair, sizeIdr, safeEntry, { 
-            sl: safeSl, 
-            tp1: exits.tp1, 
-            tp2: exits.tp2 
-          });
-          dailyTradeCount++;
+          try {
+            // Reserve exposure before call
+            engine.state.totalExposureIdr += sizeIdr; 
+            
+            await engine.executeBuy(ai.pair, sizeIdr, safeEntry, { 
+              sl: safeSl, 
+              tp1: exits.tp1, 
+              tp2: exits.tp2 
+            });
+            
+            dailyTradeCount++;
+            lastBuyTimestamp = Date.now();
+          } catch (buyErr) {
+            // Rollback exposure on failure
+            engine.state.totalExposureIdr -= sizeIdr;
+            console.error(`❌ Buy execution failed for ${ai.pair}:`, buyErr);
+          }
 
           // Simpan trade journal ke DB
           try {
