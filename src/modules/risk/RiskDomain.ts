@@ -22,6 +22,10 @@ export class RiskDomain {
     if (this.startingEquity === 0) {
       this.startingEquity = equity;
       console.log(`📊 [RISK DOMAIN] Starting equity set: Rp ${equity.toLocaleString()}`);
+    } else if (equity > this.startingEquity * 1.5) {
+      // Jika equity naik >50% dari nilai sebelumnya, update (misal setelah deposit)
+      this.startingEquity = equity;
+      console.log(`📊 [RISK DOMAIN] Starting equity updated: Rp ${equity.toLocaleString()}`);
     }
   }
 

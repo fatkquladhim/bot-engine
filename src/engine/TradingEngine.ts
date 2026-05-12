@@ -156,14 +156,21 @@ export class TradingEngine {
   // =========================
   // PORTFOLIO MANAGEMENT
   // =========================
+  private lastKnownEquity: number = 0;
+
   public async calculateTotalEquity(): Promise<number> {
     try {
       const isMockKey = this.client['apiKey'] === 'mock_key' || this.client['apiKey'] === 'mock_data' || this.client['apiKey'] === 'your_api_key_here';
       if (this.isDryRun && isMockKey) return 10000000;
 
       const equity = await getCachedEquity(this.client);
+      this.lastKnownEquity = equity.total;
       return equity.total;
     } catch (e) {
+      if (this.lastKnownEquity > 0) {
+        console.log(`⚠️ [EQUITY CALC] Gagal fetch, pakai cached: Rp ${this.lastKnownEquity.toLocaleString()}`);
+        return this.lastKnownEquity;
+      }
       console.log('⚠️ [EQUITY CALC] Gagal menghitung total equity, fallback ke balance IDR.');
       try {
         const info = await (this.client as any).getInfo();
