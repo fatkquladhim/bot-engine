@@ -826,8 +826,8 @@ async function runCLI() {
     // Jalankan siklus pertama
     runAutopilotCycle();
 
-    // Jalankan AI Cycle setiap 30 menit
-    setInterval(runAutopilotCycle, 1800000);
+    // Jalankan AI Cycle setiap 1 jam (Menghemat token & mengamankan budget $0.66 sampai akhir bulan)
+    setInterval(runAutopilotCycle, 3600000);
     
     // Jalankan Micro-Cycle setiap 2 menit (Flash Crash Guardian — dikurangi dari 30s untuk menghindari rate limit)
     setInterval(runMicroCycle, 120000);
