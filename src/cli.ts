@@ -393,58 +393,81 @@ async function runCLI() {
         const firstUser = await (prisma as any).user.findFirst();
         const validUserId = firstUser ? firstUser.id : 'default_system_user';
 
+        // Normalize summaries keys to lowercase for robust lookup
+        const normalizedSummaries: Record<string, any> = {};
+        for (const k of Object.keys(summaries)) {
+          normalizedSummaries[k.toLowerCase()] = summaries[k];
+        }
+
         for (const coin of Object.keys(balances)) {
-          if (coin === 'idr') continue;
-          const pair = `${coin}_idr`;
+          const coinLower = coin.toLowerCase();
+          if (coinLower === 'idr') continue;
+          
+          const pair = `${coinLower}_idr`;
           const totalCoin = parseFloat(balances[coin]) + parseFloat(holds[coin] || "0");
           
-          if (totalCoin > 0 && !managedPairs.includes(pair)) {
-            const price = parseFloat(summaries[pair]?.last || "0");
-            if (totalCoin * price > 20000) { // Hanya adopsi jika nilai > 20rb
-              // Cek exposure: jangan adopsi jika sudah penuh
-              const maxAllowedExposure = totalCapital * (engine['maxExposurePercent'] / 100);
-              const posAmountIdr = totalCoin * price;
-              if (engine.state.totalExposureIdr + posAmountIdr > maxAllowedExposure) {
-                console.log(`   ⏭️  Skip adopsi ${pair.toUpperCase()} — exposure penuh`);
-                continue;
+          if (totalCoin > 0) {
+            console.log(`   🔎 [ADOPTION] Ditemukan saldo koin manual: ${coin.toUpperCase()} (${totalCoin.toFixed(4)})`);
+            
+            if (managedPairs.includes(pair)) {
+              console.log(`   ⏭️  [ADOPTION] Skip adopsi ${pair.toUpperCase()} — sudah dikelola database`);
+              continue;
+            }
+            
+            const summaryData = normalizedSummaries[pair];
+            const price = summaryData ? parseFloat(summaryData.last || "0") : 0;
+            const posAmountIdr = totalCoin * price;
+            
+            console.log(`   📊 [ADOPTION] Estimasi Nilai ${pair.toUpperCase()}: Rp ${Math.round(posAmountIdr).toLocaleString('id-ID')} (Harga: Rp ${price.toLocaleString('id-ID')})`);
+            
+            if (posAmountIdr <= 20000) {
+              console.log(`   ⏭️  [ADOPTION] Skip adopsi ${pair.toUpperCase()} — nilai terlalu kecil (< Rp 20.000)`);
+              continue;
+            }
+            
+            // Bypassed Exposure limit untuk adopsi manual (karena uang asli sudah dibelanjakan secara manual, bot wajib mengamankan dengan Stop Loss/Trailing)
+            const maxAllowedExposure = totalCapital * (engine['maxExposurePercent'] / 100);
+            if (engine.state.totalExposureIdr + posAmountIdr > maxAllowedExposure) {
+              console.log(`   ⚠️  [ADOPTION] Warning: Exposure limit terlampaui (${Math.round(engine.state.totalExposureIdr + posAmountIdr).toLocaleString()} > ${Math.round(maxAllowedExposure).toLocaleString()}), tetap diadopsi demi perlindungan modal.`);
+            }
+            
+            try {
+              console.log(`   🧠 [ADOPTION] Menghubungi AI Council untuk merumuskan exit plan darurat ${pair.toUpperCase()}...`);
+              // Minta AI buatkan strategi Exit darurat
+              const ai = await sentinel.analyzePair(pair); 
+              
+              if (!ai) {
+                console.log(`   ⚠️ [ADOPTION] AI gagal menganalisa ${pair}, menggunakan setting standar (SL 5%, TP 10%)`);
               }
-              try {
-                // Minta AI buatkan strategi Exit darurat
-                const ai = await sentinel.analyzePair(pair); 
-                
-                if (!ai) {
-                  console.log(`   ⚠️ AI gagal menganalisa ${pair}, menggunakan setting standar (SL 5%, TP 10%)`);
-                }
-                
-                // 2. Add to Engine State Memory (so it's managed immediately)
-                const posAmountIdr = totalCoin * price;
-                engine.state.openPositions[pair] = {
-                  amountIdr: posAmountIdr,
-                  amountCrypto: totalCoin,
-                  entryPrice: price,
-                  sl: ai?.precise_sl || price * 0.95,
-                  tp1: ai?.precise_tp || price * 1.1,
-                  tpHits: []
-                };
-                engine.state.totalExposureIdr += posAmountIdr;
+              
+              // 2. Add to Engine State Memory (so it's managed immediately)
+              engine.state.openPositions[pair] = {
+                amountIdr: posAmountIdr,
+                amountCrypto: totalCoin,
+                entryPrice: price,
+                sl: ai?.precise_sl || price * 0.95,
+                tp1: ai?.precise_tp || price * 1.1,
+                tpHits: []
+              };
+              engine.state.totalExposureIdr += posAmountIdr;
 
-                await (prisma as any).analysis.create({
-                  data: {
-                    userId: validUserId, 
-                    assetName: pair,
-                    entryPrice: price,
-                    targetPrice1: ai?.precise_tp || price * 1.05,
-                    targetPrice2: ai?.precise_tp || price * 1.1,
-                    stopLoss: ai?.precise_sl || price * 0.95,
-                    status: 'TRADING',
-                    analysisText: `ADOPTED: ${ai?.why_now || 'Manual trade management taken over by AI'}`
-                  }
-                });
-                
-                await DBBridge.logActivity('SYSTEM', `📦 ADOPTED: ${pair.toUpperCase()} has been integrated into AI management.`);
-              } catch (adoptErr) {
-                console.error(`❌ Gagal mengadopsi ${pair}:`, adoptErr);
-              }
+              await (prisma as any).analysis.create({
+                data: {
+                  userId: validUserId, 
+                  assetName: pair,
+                  entryPrice: price,
+                  targetPrice1: ai?.precise_tp || price * 1.05,
+                  targetPrice2: ai?.precise_tp || price * 1.1,
+                  stopLoss: ai?.precise_sl || price * 0.95,
+                  status: 'TRADING',
+                  analysisText: `ADOPTED: ${ai?.why_now || 'Manual trade management taken over by AI'}`
+                }
+              });
+              
+              console.log(`   ✅ [ADOPTED] ${pair.toUpperCase()} berhasil diintegrasikan ke kelolaan AI (SL: Rp ${Math.round(ai?.precise_sl || price * 0.95).toLocaleString()})`);
+              await DBBridge.logActivity('SYSTEM', `📦 ADOPTED: ${pair.toUpperCase()} has been integrated into AI management.`);
+            } catch (adoptErr: any) {
+              console.error(`❌ Gagal mengadopsi ${pair}:`, adoptErr.message);
             }
           }
         }
