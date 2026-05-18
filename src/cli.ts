@@ -357,21 +357,15 @@ async function runCLI() {
         const balances = info.balance || {};
         const holds = info.balance_hold || {};
 
-        // ===== CRITICAL: Reconcile Exposure from Real Indodax Data =====
+        // ===== Reconcile Exposure — hanya hitung posisi yang dikelola bot =====
         let realExposure = 0;
-        for (const coin of Object.keys(balances)) {
-          if (coin === 'idr') continue;
-          const amount = parseFloat(balances[coin]) + parseFloat(holds[coin] || "0");
-          if (amount > 0) {
-            const pair = `${coin}_idr`;
-            const price = parseFloat(summaries[pair]?.last || "0");
-            realExposure += amount * price;
-          }
+        for (const pair of Object.keys(engine.state.openPositions)) {
+          const coin = pair.split('_')[0];
+          const amount = parseFloat(balances[coin] || "0") + parseFloat(holds[coin] || "0");
+          const price = parseFloat(summaries[pair]?.last || "0");
+          realExposure += amount * price;
         }
-        if (Math.abs(engine.state.totalExposureIdr - realExposure) > 50000) {
-          console.log(`🔧 [RECONCILE] Exposure drift detected: Rp ${Math.round(engine.state.totalExposureIdr).toLocaleString()} → Rp ${Math.round(realExposure).toLocaleString()}`);
-          engine.state.totalExposureIdr = realExposure;
-        }
+        engine.state.totalExposureIdr = realExposure;
 
         compounding.autoAdjustRatios(totalCapital);
         
@@ -407,7 +401,13 @@ async function runCLI() {
           if (totalCoin > 0 && !managedPairs.includes(pair)) {
             const price = parseFloat(summaries[pair]?.last || "0");
             if (totalCoin * price > 20000) { // Hanya adopsi jika nilai > 20rb
-              console.log(`\n📦 [ADOPTION] Mengadopsi ${pair.toUpperCase()} (Manual Purchase detected)`);
+              // Cek exposure: jangan adopsi jika sudah penuh
+              const maxAllowedExposure = totalCapital * (engine['maxExposurePercent'] / 100);
+              const posAmountIdr = totalCoin * price;
+              if (engine.state.totalExposureIdr + posAmountIdr > maxAllowedExposure) {
+                console.log(`   ⏭️  Skip adopsi ${pair.toUpperCase()} — exposure penuh`);
+                continue;
+              }
               try {
                 // Minta AI buatkan strategi Exit darurat
                 const ai = await sentinel.analyzePair(pair); 
@@ -703,9 +703,6 @@ async function runCLI() {
 
           // EXECUTE ORDER
           try {
-            // Reserve exposure before call
-            engine.state.totalExposureIdr += sizeIdr; 
-            
             await engine.executeBuy(ai.pair, sizeIdr, safeEntry, { 
               sl: safeSl, 
               tp1: exits.tp1, 
@@ -715,8 +712,6 @@ async function runCLI() {
             dailyTradeCount++;
             lastBuyTimestamp = Date.now();
           } catch (buyErr) {
-            // Rollback exposure on failure
-            engine.state.totalExposureIdr -= sizeIdr;
             console.error(`❌ Buy execution failed for ${ai.pair}:`, buyErr);
           }
 
