@@ -101,10 +101,10 @@ export class CompoundingEngine {
       recommendedSizeIdr = maxHardCapIdr;
     }
 
-    // FLOOR LOGIC: Jangan entry di bawah 50rb agar tidak kena debu (Dust) dan ditolak Indodax
-    const MIN_ENTRY = 50000;
+    // FLOOR LOGIC: Jangan entry di bawah 10rb (minimum order asli Indodax)
+    const MIN_ENTRY = 10000;
     if (recommendedSizeIdr > 0 && recommendedSizeIdr < MIN_ENTRY) {
-      // Jika saldo dompet mencukupi, naikkan ke 50rb
+      // Jika saldo dompet mencukupi, naikkan ke 10rb
       if (activeWalletIdr >= MIN_ENTRY) {
         recommendedSizeIdr = MIN_ENTRY;
       }
