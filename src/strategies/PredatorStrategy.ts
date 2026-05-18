@@ -80,6 +80,16 @@ export class PredatorStrategy {
         }
       }
     }
+
+    // AI VETO GUARD: Respect AI Council's consensus. Skip trading if they vote AVOID or WAIT.
+    if (consensus.action === 'AVOID' || consensus.action === 'WAIT') {
+      return {
+        shouldBuy: false,
+        action: 'SKIP',
+        reason: `🚫 AI VETO: Council consensus is ${consensus.action} (Votes: ${aiResults.filter(r => r.action === 'BUY').length}/3 BUY, Avg AI Score: ${consensus.finalScore.toFixed(0)})`,
+        score: consensus.finalScore
+      };
+    }
     
     // 4. Technical Analysis (SMC + Sniper)
     const [smc, sniper] = await Promise.all([
@@ -219,22 +229,22 @@ export class PredatorStrategy {
       plan.tp3 = resolvedEntry + (plan.tp3 - resolvedEntry) * riskProfile.tpMult;
     }
 
-    let marketBuyThreshold = 60;
-    let limitEntryThreshold = 45;
-    let scoutEntryThreshold = 35;
+    let marketBuyThreshold = 70;
+    let limitEntryThreshold = 55;
+    let scoutEntryThreshold = 45;
 
     if (marketPhase === 'MEME_MANIA') {
-      marketBuyThreshold = 50;
-      limitEntryThreshold = 40;
-      scoutEntryThreshold = 30;
+      marketBuyThreshold = 60;
+      limitEntryThreshold = 50;
+      scoutEntryThreshold = 40;
     } else if (marketPhase === 'ALTSEASON') {
-      marketBuyThreshold = 55;
-      limitEntryThreshold = 40;
-      scoutEntryThreshold = 30;
+      marketBuyThreshold = 62;
+      limitEntryThreshold = 52;
+      scoutEntryThreshold = 42;
     } else if (marketPhase === 'PREDATOR_BULL') {
-      marketBuyThreshold = 58;
-      limitEntryThreshold = 43;
-      scoutEntryThreshold = 33;
+      marketBuyThreshold = 65;
+      limitEntryThreshold = 53;
+      scoutEntryThreshold = 43;
     }
 
     // Adjust thresholds based on sector confidence requirements
