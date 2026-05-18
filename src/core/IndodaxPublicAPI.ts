@@ -74,7 +74,7 @@ export class IndodaxPublicAPI {
     const cached = cache.get('all_tickers');
     if (cached && Date.now() < cached.expiry) return cached.data as Record<string, any>;
     const data: any = await indodaxGet(
-      'https://indodax.com/api/ticker_all',
+      'https://indodax.com/api/summaries',
       'all_tickers',
       cache,
       60_000

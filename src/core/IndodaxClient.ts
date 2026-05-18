@@ -135,13 +135,19 @@ export async function getCachedEquity(client: IndodaxClient): Promise<{ total: n
 
   const info = await getCachedBalance(client);
   const balances = info.balance || {};
+  const holds = info.balance_hold || {};
   const allTickers = await IndodaxPublicAPI.getAllTickers();
 
-  let totalIdr = parseFloat(balances.idr || '0');
+  const idrBalance = parseFloat(balances.idr || '0') + parseFloat(holds.idr || '0');
+  let totalIdr = idrBalance;
   const assets: any[] = [];
 
-  for (const [coin, amt] of Object.entries(balances)) {
-    if (coin === 'idr' || coin === 'timestamp' || parseFloat(amt as string) <= 0) continue;
+  const allCoins = new Set([...Object.keys(balances), ...Object.keys(holds)]);
+
+  for (const coin of allCoins) {
+    if (coin === 'idr' || coin === 'timestamp') continue;
+    const totalAmt = parseFloat(balances[coin] || '0') + parseFloat(holds[coin] || '0');
+    if (totalAmt <= 0) continue;
     
     // FIX: Indodax Ticker All keys are inconsistent (btcidr vs btc_idr)
     const pairUnderscore = `${coin.toLowerCase()}_idr`;
@@ -149,14 +155,14 @@ export async function getCachedEquity(client: IndodaxClient): Promise<{ total: n
     const ticker = allTickers[pairNoUnderscore] || allTickers[pairUnderscore];
     
     const price = ticker ? parseFloat(ticker.last) : 0;
-    const value = price * parseFloat(amt as string);
+    const value = price * totalAmt;
     if (value > 1000) {
-      assets.push({ coin, amount: parseFloat(amt as string), value, price });
+      assets.push({ coin: coin.toUpperCase(), amount: totalAmt, value, price });
       totalIdr += value;
     }
   }
 
-  cachedEquity = { total: totalIdr, idr: parseFloat(balances.idr || '0'), assets, tickers: allTickers };
+  cachedEquity = { total: totalIdr, idr: idrBalance, assets, tickers: allTickers };
   lastEquityFetch = now;
   return cachedEquity;
 }
