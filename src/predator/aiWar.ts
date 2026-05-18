@@ -86,11 +86,11 @@ export class AIWarConsensus {
       else if (buyVotes >= 1 && avgScore >= 40) action = 'WATCHLIST';
     }
 
-    // === DEFENSE MODE: Keep original behavior ===
+    // === DEFENSE MODE: Loosened to prevent excessive vetoing of solid accumulation setups ===
     if (regime === MarketRegime.DEFENSE) {
-      if (buyVotes >= 2 && avgScore >= 70) action = 'BUY';
-      else if (buyVotes >= 2 && avgScore >= 55) action = 'WATCHLIST';
-      else if (buyVotes >= 1 && avgScore >= 45) action = 'WAIT';
+      if (buyVotes >= 1 && avgScore >= 55) action = 'BUY';
+      else if (buyVotes >= 1 && avgScore >= 40) action = 'WATCHLIST';
+      else if (avgScore >= 35) action = 'WATCHLIST'; // Permissive: pass to PredatorStrategy technical checks
       else action = 'AVOID';
     }
 
